@@ -37,24 +37,25 @@ def initialize(ls, params):
     logging.info("XML Language Server initialized.")
 
     initialization_options = params.initialization_options or {}
-    schema_path = initialization_options.get("schema")
-    ls.schema_path = schema_path
+    schema_config = initialization_options.get("schema")
+
+    ls.schema_config = schema_config
     ls.schema = None
 
-    if schema_path:
-        logging.info(f"Schema path set to: {schema_path}")
-        try:
-            ls.schema = xmlschema.XMLSchema11(schema_path)
-            logging.info(f"Successfully loaded schema: {schema_path}")
-            logging.info(f"   Defined elements: {list(ls.schema.elements.keys())}")
-
-        except Exception as e:
-            # Using error level for exceptions.
-            logging.error(
-                f"Failed to load schema from {schema_path}: {e}", exc_info=True
-            )
-    else:
-        logging.info("No schema path provided.")
+    # if schema_path:
+    #     logging.info(f"Schema path set to: {schema_path}")
+    #     try:
+    #         ls.schema = xmlschema.XMLSchema11(schema_path)
+    #         logging.info(f"Successfully loaded schema: {schema_path}")
+    #         logging.info(f"   Defined elements: {list(ls.schema.elements.keys())}")
+    #
+    #     except Exception as e:
+    #         # Using error level for exceptions.
+    #         logging.error(
+    #             f"Failed to load schema from {schema_path}: {e}", exc_info=True
+    #         )
+    # else:
+    #     logging.info("No schema path provided.")
 
     return None
 
@@ -175,7 +176,7 @@ def _validate_document(ls, uri, content):
 def did_open(ls, params):
     """Document opened."""
     uri = params.text_document.uri
-    logging.info(f"File opened: {uri}, creating session.")
+    logging.info(f"didOpen: {uri}, creating session.")
     content = params.text_document.text
     session_cache[uri] = {"content": content}
     _validate_document(ls, uri, content)
@@ -185,7 +186,7 @@ def did_open(ls, params):
 def did_change(ls, params):
     """Document changed."""
     uri = params.text_document.uri
-    logging.info(f"File changed: {uri}")
+    logging.info(f"didChange: {uri}")
 
     # Ensure session exists, refreshing its TTL
     if uri not in session_cache or "content" not in session_cache[uri]:
@@ -206,28 +207,29 @@ def did_change(ls, params):
     # Immediate validation
     _validate_document(ls, uri, new_content)
 
-    # Debounced validation with a timer
+    # Deferred validation with a timer (debounced)
     if session.get("timer"):
         session["timer"].cancel()
         logging.info(f"Cancelled previous timer for {uri}.")
 
-    def debounced_validation(ls_instance, doc_uri):
+    def deferred_validation(ls_instance, doc_uri):
         logging.info(f"Running debounced validation for {doc_uri}.")
         if doc_uri in session_cache and "content" in session_cache[doc_uri]:
             content = session_cache[doc_uri]["content"]
             _validate_document(ls_instance, doc_uri, content)
         else:
-            logging.warning(f"No content found for {doc_uri} in debounced validation.")
+            logging.warning(f"No content found for {doc_uri} in deferred validation.")
 
-    timer = threading.Timer(4.0, debounced_validation, args=[ls, uri])
+    timer = threading.Timer(4.0, deferred_validation, args=[ls, uri])
     session["timer"] = timer
     timer.start()
-    logging.info(f"Scheduled debounced validation for {uri}.")
+    logging.info(f"Scheduled deferred validation for {uri}.")
 
 
 @server.feature("textDocument/completion")
 def completion(ls, params):
     """Provide completion suggestions."""
+    logging.info(f"completion")
     return CompletionList(
         is_incomplete=False,
         items=[
