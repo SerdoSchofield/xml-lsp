@@ -72,6 +72,15 @@ def _validate_document(ls, uri):
                     line = (error.line or 1) - 1
                     column = (error.column or 1) - 1
                 else:
+                    # AI! The error object can often have these fields:
+                    # path, reason.
+                    # the path is an xpath in the document. It shows the
+                    # parent element. The reason is a string like this:
+                    # "Unexpected child with tag 'woof' at position 2."
+                    # Extract the number after "position" in that string and
+                    # use that as the line number. That position will be 0-based,
+                    # just as LSP requires.
+
                     line = 1
                     column = 1
 
