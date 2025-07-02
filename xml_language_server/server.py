@@ -317,7 +317,9 @@ def did_save(ls, params):
         logging.error(f"Could not read file on save for {uri}: {e}")
 
 
-def _get_valid_elements_at_position(schema: XMLSchema, xml_content: str, position: int):
+def _get_valid_elements_at_position(
+    schema: xmlschema.XMLSchema, xml_content: str, position: int
+):
     """
     Finds the list of valid child elements at a specific position in an XML string.
 
@@ -418,26 +420,21 @@ def completion(ls, params):
     logging.info(f"got schema {schema}")
     logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
 
-    # AI! convert the pos variable into a character_position.
-    #
-    completions = _get_valid_elements_at_position(schema, content, character_position)
+    lines = content.splitlines(True)
+    if not lines:
+        lines = [""]
+    character_position = _pos_to_offset(lines, pos)
 
-    logging.info(f"iterating elements....")
+    completions = _get_valid_elements_at_position(
+        schema, content, character_position
+    )
+    logging.info(f"Found {len(completions)} completions: {completions}")
+
     items = []
-    if context_xsd_element and hasattr(context_xsd_element.type, "content"):
-        for child_xsd in context_xsd_element.type.content.iter_elements():
-            detail = child_xsd.name
-            if child_xsd.annotation and child_xsd.annotation.documentation:
-                detail = child_xsd.annotation.documentation[0].text
-
-            items.append(
-                CompletionItem(
-                    label=child_xsd.name,
-                    kind=CompletionItemKind.Struct,
-                    detail=detail,
-                    insert_text=child_xsd.name,
-                )
-            )
+    for label in completions:
+        items.append(
+            CompletionItem(label=label, kind=CompletionItemKind.Struct, insert_text=label)
+        )
 
     return CompletionList(is_incomplete=False, items=items)
 
