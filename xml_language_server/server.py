@@ -325,7 +325,10 @@ def did_save(ls, params):
         logging.error(f"Could not read file on save for {uri}: {e}")
 
 
-def _get_valid_elements_at_position(
+# AI! Modify this function so that it returns 2 things given the current position:
+# - the parent element (if any)
+# - and the list of child elements that are valid at that position.
+def _get_element_context_at_position(
     schema: xmlschema.XMLSchema, xml_content: str, pos: Position
 ):
     """
@@ -431,11 +434,13 @@ def completion(ls, params):
     logging.info(f"got schema {schema}")
     logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
 
-    completions = _get_valid_elements_at_position(schema, content, pos)
+    completions = _get_element_context_at_position(schema, content, pos)
     logging.info(f"Found {len(completions)} completions: {completions}")
 
     items = [
-        CompletionItem(label=label, kind=CompletionItemKind.Struct, insert_text=label)
+        CompletionItem(
+            label=label, kind=CompletionItemKind.Struct, insert_text=f"<{label}>"
+        )
         for label in completions
     ]
 
