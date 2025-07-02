@@ -70,31 +70,42 @@ def _validate_document(ls, uri):
                 # The xmlschema library provides 1-based line/column numbers.
                 # LSP positions are 0-based.
                 logging.info(f"Schema validation error: {error.message}")
-                if hasattr(error, "sourceline"):
+
+                line, column = 1, 1
+
+                # error.sourceline is the line number of the element that the error
+                # is associated with. For child validation errors, this is the parent.
+                if hasattr(error, "sourceline") and error.sourceline:
+                    line = error.sourceline
                     logging.info(f"  at line={error.sourceline}")
-                    line = error.sourceline or 1
-                    column = 1
-                else:
-                    line = 1
-                    column = 1
 
                 if hasattr(error, "path"):
                     logging.info(f"  path: {error.path}")
-                if hasattr(error, "reason"):
+
+                # For errors about unexpected children, we can get a more precise line number.
+                if hasattr(error, "reason") and hasattr(error, "elem"):
                     logging.info(f"  reason: {error.reason}")
-                    # Eg "Unexpected child with tag 'TRemove' at position 3."
                     match = re.search(r"position (\d+)", error.reason)
                     if match:
-                        position = int(match.group(1))
-                        # AI! position is actually the index of the element in the list of children.
-                        # How to resolve this to a LINE NUMBER !??!
-                        line = line + position - 1
+                        position = int(match.group(1))  # 1-based index
+                        try:
+                            # The 'elem' attribute on the error is the parent element.
+                            # Children can be accessed by index.
+                            child_element = error.elem[position - 1]
+                            if (
+                                hasattr(child_element, "sourceline")
+                                and child_element.sourceline
+                            ):
+                                line = child_element.sourceline
+                        except IndexError:
+                            pass  # child not found, use parent's line number
 
-                pos = Position(line=line, character=column)
+                # LSP positions are 0-based.
+                pos = Position(line=line - 1, character=column - 1)
 
                 diagnostic = Diagnostic(
                     range=Range(start=pos, end=pos),
-                    message=error.reason,
+                    message=error.reason or error.message,
                     severity=DiagnosticSeverity.Error,
                 )
                 diagnostics.append(diagnostic)
