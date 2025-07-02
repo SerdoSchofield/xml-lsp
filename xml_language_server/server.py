@@ -41,12 +41,8 @@ def initialize(ls, params):
     return None
 
 
-@server.feature("textDocument/didOpen")
-def did_open(ls, params):
-    """Document opened."""
-    uri = params.text_document.uri
-    logging.info(f"File opened: {uri}")
-
+def _validate_document(ls, uri):
+    """Validate the document against the schema."""
     if not ls.schema:
         logging.info("No schema available, skipping validation.")
         return
@@ -64,6 +60,22 @@ def did_open(ls, params):
                 logging.warning(f"  - {error}")
     except Exception as e:
         logging.error(f"Error during validation of {uri}: {e}", exc_info=True)
+
+
+@server.feature("textDocument/didOpen")
+def did_open(ls, params):
+    """Document opened."""
+    uri = params.text_document.uri
+    logging.info(f"File opened: {uri}")
+    _validate_document(ls, uri)
+
+
+@server.feature("textDocument/didChange")
+def did_change(ls, params):
+    """Document changed."""
+    uri = params.text_document.uri
+    logging.info(f"File changed: {uri}")
+    _validate_document(ls, uri)
 
 
 def main():
