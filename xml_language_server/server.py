@@ -66,8 +66,15 @@ def _validate_document(ls, uri):
             for error in validation_errors:
                 # The xmlschema library provides 1-based line/column numbers.
                 # LSP positions are 0-based.
-                line = (error.line or 1) - 1
-                column = (error.column or 1) - 1
+                # line = (error.line or 1) - 1
+                # column = (error.column or 1) - 1
+
+                # AI! Here, print out the error information to the log.
+                # There may or may not be line and column information available
+                # on the error.
+
+                line = 1
+                column = 1
 
                 pos = Position(line=line, character=column)
 
@@ -78,9 +85,7 @@ def _validate_document(ls, uri):
                 )
                 diagnostics.append(diagnostic)
 
-            logging.warning(
-                f"Validation of {uri} found {len(diagnostics)} errors."
-            )
+            logging.warning(f"Validation of {uri} found {len(diagnostics)} errors.")
             ls.publish_diagnostics(uri, diagnostics)
     except Exception as e:
         msg = str(e)
@@ -93,7 +98,8 @@ def _validate_document(ls, uri):
             error_message = msg[: match.start()]
 
             # LSP positions are 0-based.
-            pos = Position(line=line - 1, character=column - 1)
+            # For some reason we need to subtract 2?, not just 1
+            pos = Position(line=line - 2, character=column - 1)
 
             diagnostic = Diagnostic(
                 range=Range(start=pos, end=pos),
@@ -103,7 +109,7 @@ def _validate_document(ls, uri):
             diagnostics.append(diagnostic)
 
         ls.publish_diagnostics(uri, diagnostics)
-        logging.error(f"Error during validation of {uri}: {e}", exc_info=True)
+        logging.error(f"Error during validation of {uri}: {e}", exc_info=False)
 
 
 @server.feature("textDocument/didOpen")
