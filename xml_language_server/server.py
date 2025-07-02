@@ -53,6 +53,14 @@ def initialize(ls, params):
     return None
 
 
+def _pos_to_offset2(content: str, pos: Position) -> int:
+    """Convert line/character position to a string offset."""
+    lines = content.splitlines(True)
+    if not lines:
+        lines = [""]
+    return _pos_to_offset(lines, pos)
+
+
 def _pos_to_offset(lines: list[str], pos: Position) -> int:
     """Convert line/character position to a string offset."""
     offset = 0
@@ -318,7 +326,7 @@ def did_save(ls, params):
 
 
 def _get_valid_elements_at_position(
-    schema: xmlschema.XMLSchema, xml_content: str, position: int
+    schema: xmlschema.XMLSchema, xml_content: str, pos: Position
 ):
     """
     Finds the list of valid child elements at a specific position in an XML string.
@@ -331,6 +339,9 @@ def _get_valid_elements_at_position(
     Returns:
         A list of valid element tag names, or an empty list if none are found.
     """
+
+    position = _pos_to_offset2(xml_content, pos)
+
     # 1. Insert a temporary marker element at the cursor's position.
     #    This gives us a node to find in the parsed tree.
     marker_tag = "completion_marker_fa6fb971-e37d-4316-84ed-27507cf687b8"
@@ -420,20 +431,16 @@ def completion(ls, params):
     logging.info(f"got schema {schema}")
     logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
 
-    lines = content.splitlines(True)
-    if not lines:
-        lines = [""]
-    character_position = _pos_to_offset(lines, pos)
-
-    completions = _get_valid_elements_at_position(
-        schema, content, character_position
-    )
+    completions = _get_valid_elements_at_position(schema, content, pos)
     logging.info(f"Found {len(completions)} completions: {completions}")
 
+    # AI! in python, is there a map function that can simply map the completions list into an items list of the proper shape?
     items = []
     for label in completions:
         items.append(
-            CompletionItem(label=label, kind=CompletionItemKind.Struct, insert_text=label)
+            CompletionItem(
+                label=label, kind=CompletionItemKind.Struct, insert_text=label
+            )
         )
 
     return CompletionList(is_incomplete=False, items=items)
