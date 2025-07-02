@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import threading
 
@@ -24,6 +25,7 @@ logging.basicConfig(
 )
 
 server = LanguageServer("xml-language-server", "v0.2")
+server.workspaces = {}
 
 
 # Cache for storing document-specific sessions
@@ -37,25 +39,15 @@ def initialize(ls, params):
     logging.info("XML Language Server initialized.")
 
     initialization_options = params.initialization_options or {}
-    schema_config = initialization_options.get("schema")
+    root_uri = params.root_uri
 
-    ls.schema_config = schema_config
-    ls.schema = None
-
-    # if schema_path:
-    #     logging.info(f"Schema path set to: {schema_path}")
-    #     try:
-    #         ls.schema = xmlschema.XMLSchema11(schema_path)
-    #         logging.info(f"Successfully loaded schema: {schema_path}")
-    #         logging.info(f"   Defined elements: {list(ls.schema.elements.keys())}")
-    #
-    #     except Exception as e:
-    #         # Using error level for exceptions.
-    #         logging.error(
-    #             f"Failed to load schema from {schema_path}: {e}", exc_info=True
-    #         )
-    # else:
-    #     logging.info("No schema path provided.")
+    if root_uri:
+        logging.info(f"Workspace root: {root_uri}")
+        ls.workspaces[root_uri] = {
+            "options": initialization_options,
+            "schemas": {},
+            "roots": {},
+        }
 
     return None
 
@@ -86,16 +78,68 @@ def _apply_incremental_changes(content: str, changes: list) -> str:
     return content
 
 
-def _validate_document(ls, uri, content):
+def _get_schema_for_doc(ls, uri, content):
+    """Finds and loads the schema for a given document."""
+    # "trim the final element of the path"
+    root_uri = uri.rpartition("/")[0]
+    workspace = ls.workspaces.get(root_uri)
+
+    if not workspace:
+        logging.warning(f"No workspace found for root URI: {root_uri}")
+        return None
+
+    options = workspace.get("options", {})
+    schema_options = options.get("schema", {})
+    matchers = schema_options.get("matchers", [])
+
+    use_rootelement_matcher = any(m.get("rootelement") for m in matchers)
+    if not use_rootelement_matcher:
+        return None
+
+    try:
+        # Use lxml to parse and get the root element name
+        xml_doc = ET.fromstring(content.encode("utf-8"))
+        root_element_name = xml_doc.tag
+    except ET.XMLSyntaxError:
+        # Invalid XML, can't determine root element
+        return None
+
+    workspace["roots"][uri] = root_element_name
+
+    # Check cache first
+    if root_element_name in workspace["schemas"]:
+        return workspace["schemas"][root_element_name]
+
+    # Not in cache, search for it
+    searchpaths = schema_options.get("searchpaths", [])
+    for searchpath in searchpaths:
+        schema_path = os.path.join(searchpath, f"{root_element_name}.xsd")
+        if os.path.exists(schema_path):
+            logging.info(f"Found schema for {root_element_name} at {schema_path}")
+            try:
+                schema = xmlschema.XMLSchema11(schema_path)
+                # Cache it
+                workspace["schemas"][root_element_name] = schema
+                return schema
+            except Exception as e:
+                logging.error(f"Failed to load schema {schema_path}: {e}")
+                # Don't try other paths if we found one but it failed to load
+                return None
+
+    logging.warning(f"No schema found for root element {root_element_name}")
+    return None
+
+
+def _validate_document(ls, uri, content, schema):
     """Validate the document against the schema."""
-    if not ls.schema:
+    if not schema:
         logging.info("No schema available, skipping validation.")
         ls.publish_diagnostics(uri, [])
         return
 
     try:
         xml_doc = ET.fromstring(content.encode("utf-8"))
-        validation_errors = list(ls.schema.iter_errors(xml_doc))
+        validation_errors = list(schema.iter_errors(xml_doc))
         if not validation_errors:
             logging.info(f"Validation successful for {uri}: No errors found.")
             ls.publish_diagnostics(uri, [])
@@ -179,7 +223,8 @@ def did_open(ls, params):
     logging.info(f"didOpen: {uri}, creating session.")
     content = params.text_document.text
     session_cache[uri] = {"content": content}
-    _validate_document(ls, uri, content)
+    schema = _get_schema_for_doc(ls, uri, content)
+    _validate_document(ls, uri, content, schema)
 
 
 @server.feature("textDocument/didChange")
@@ -204,23 +249,32 @@ def did_change(ls, params):
     session_cache[uri]["content"] = new_content
     session = session_cache[uri]
 
+    # Schema lookup
+    root_uri = uri.rpartition("/")[0]
+    schema = None
+    workspace = ls.workspaces.get(root_uri)
+    if workspace:
+        root_element_name = workspace["roots"].get(uri)
+        if root_element_name:
+            schema = workspace["schemas"].get(root_element_name)
+
     # Immediate validation
-    _validate_document(ls, uri, new_content)
+    _validate_document(ls, uri, new_content, schema)
 
     # Deferred validation with a timer (debounced)
     if session.get("timer"):
         session["timer"].cancel()
         logging.info(f"Cancelled previous timer for {uri}.")
 
-    def deferred_validation(ls_instance, doc_uri):
+    def deferred_validation(ls_instance, doc_uri, doc_schema):
         logging.info(f"Running debounced validation for {doc_uri}.")
         if doc_uri in session_cache and "content" in session_cache[doc_uri]:
             content = session_cache[doc_uri]["content"]
-            _validate_document(ls_instance, doc_uri, content)
+            _validate_document(ls_instance, doc_uri, content, doc_schema)
         else:
             logging.warning(f"No content found for {doc_uri} in deferred validation.")
 
-    timer = threading.Timer(4.0, deferred_validation, args=[ls, uri])
+    timer = threading.Timer(4.0, deferred_validation, args=[ls, uri, schema])
     session["timer"] = timer
     timer.start()
     logging.info(f"Scheduled deferred validation for {uri}.")
