@@ -56,7 +56,33 @@ def initialize(ls, params):
     return None
 
 
-def _validate_document(ls, uri):
+def _pos_to_offset(lines: list[str], pos: Position) -> int:
+    """Convert line/character position to a string offset."""
+    offset = 0
+    for i in range(pos.line):
+        offset += len(lines[i])
+    return offset + pos.character
+
+
+def _apply_incremental_changes(content: str, changes: list) -> str:
+    """Apply incremental changes to the document content."""
+    for change in changes:
+        if not hasattr(change, "range") or change.range is None:
+            # Full content update
+            return change.text
+
+        lines = content.splitlines(True)
+        if not lines:
+            lines = [""]
+
+        start_offset = _pos_to_offset(lines, change.range.start)
+        end_offset = _pos_to_offset(lines, change.range.end)
+
+        content = content[:start_offset] + change.text + content[end_offset:]
+    return content
+
+
+def _validate_document(ls, uri, content):
     """Validate the document against the schema."""
     if not ls.schema:
         logging.info("No schema available, skipping validation.")
@@ -64,9 +90,7 @@ def _validate_document(ls, uri):
         return
 
     try:
-        file_path = to_fs_path(uri)
-        xml_doc = ET.parse(file_path)
-
+        xml_doc = ET.fromstring(content.encode("utf-8"))
         validation_errors = list(ls.schema.iter_errors(xml_doc))
         if not validation_errors:
             logging.info(f"Validation successful for {uri}: No errors found.")
@@ -149,8 +173,9 @@ def did_open(ls, params):
     """Document opened."""
     uri = params.text_document.uri
     logging.info(f"File opened: {uri}, creating session.")
-    session_cache[uri] = {}
-    _validate_document(ls, uri)
+    content = params.text_document.text
+    session_cache[uri] = {"content": content}
+    _validate_document(ls, uri, content)
 
 
 @server.feature("textDocument/didChange")
@@ -160,13 +185,23 @@ def did_change(ls, params):
     logging.info(f"File changed: {uri}")
 
     # Ensure session exists, refreshing its TTL
-    if uri not in session_cache:
-        logging.info(f"Session not found for {uri}, creating one.")
-        session_cache[uri] = {}
+    if uri not in session_cache or "content" not in session_cache[uri]:
+        logging.info(f"Session or content not found for {uri}, creating/re-reading.")
+        try:
+            with open(to_fs_path(uri), "r", encoding="utf-8") as f:
+                content = f.read()
+                session_cache[uri] = {"content": content}
+        except Exception:
+            logging.error("Could not read file %s", uri)
+            return
+
+    current_content = session_cache[uri]["content"]
+    new_content = _apply_incremental_changes(current_content, params.content_changes)
+    session_cache[uri]["content"] = new_content
     session = session_cache[uri]
 
     # Immediate validation
-    _validate_document(ls, uri)
+    _validate_document(ls, uri, new_content)
 
     # Debounced validation with a timer
     if session.get("timer"):
@@ -175,12 +210,16 @@ def did_change(ls, params):
 
     def debounced_validation(ls_instance, doc_uri):
         logging.info(f"Running debounced validation for {doc_uri}.")
-        _validate_document(ls_instance, doc_uri)
+        if doc_uri in session_cache and "content" in session_cache[doc_uri]:
+            content = session_cache[doc_uri]["content"]
+            _validate_document(ls_instance, doc_uri, content)
+        else:
+            logging.warning(f"No content found for {doc_uri} in debounced validation.")
 
-    timer = threading.Timer(5.0, debounced_validation, args=[ls, uri])
+    timer = threading.Timer(8.0, debounced_validation, args=[ls, uri])
     session["timer"] = timer
     timer.start()
-    logging.info(f"Scheduled debounced validation for {uri}.")
+    logging.info(f"Scheduled debounced validation for {uri} in 8s.")
 
 
 def main():
