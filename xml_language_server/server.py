@@ -59,6 +59,18 @@ def _validate_document(ls, uri):
             for error in validation_errors:
                 logging.warning(f"  - {error}")
     except Exception as e:
+        # AI!
+        # The exception will be of the form:
+        # "invalid XML syntax: not well-formed (invalid token): line 4, column 2"
+        #
+        # Extract the line and column number from the exception, and send back a
+        # publishDiagnostics notification, passing the document's URI and a Diagnostic object,
+        # containing the appropriate range, the message , and the severity. In this case,
+        # the severity is Error.  The range is determine by the line and column you
+        # extracted above.  The message should be the
+        # full exception message, with the line and column information trimmed off.
+        # In the above example, the message returned in the Diagnostic should be:
+        # "invalid XML syntax: not well-formed (invalid token)"
         logging.error(f"Error during validation of {uri}: {e}", exc_info=True)
 
 
