@@ -325,22 +325,20 @@ def did_save(ls, params):
         logging.error(f"Could not read file on save for {uri}: {e}")
 
 
-# AI! Modify this function so that it returns 2 things given the current position:
-# - the parent element (if any)
-# - and the list of child elements that are valid at that position.
 def _get_element_context_at_position(
     schema: xmlschema.XMLSchema, xml_content: str, pos: Position
 ):
     """
-    Finds the list of valid child elements at a specific position in an XML string.
+    Finds the parent element and list of valid child elements at a specific position.
 
     Args:
         schema: A loaded xmlschema.XMLSchema object.
         xml_content: The potentially incomplete XML document as a string.
-        position: The integer position of the cursor.
+        pos: The LSP Position of the cursor.
 
     Returns:
-        A list of valid element tag names, or an empty list if none are found.
+        A tuple containing the parent lxml element (or None) and a list of
+        valid child element tag names.
     """
 
     position = _pos_to_offset2(xml_content, pos)
@@ -355,26 +353,27 @@ def _get_element_context_at_position(
     try:
         root = ET.fromstring(xml_with_marker.encode("utf-8"), parser)
     except ET.XMLSyntaxError:
-        return []  # The document is too broken to parse even with recovery.
+        # The document is too broken to parse even with recovery.
+        return (None, [])
 
     # 3. Find the marker element in the resulting tree.
     marker = root.find(f".//{marker_tag}")
     if marker is None:
-        return []  # Could not find the marker.
+        return (None, [])  # Could not find the marker.
 
     # 4. Get the parent of the marker. This is our context.
     parent = marker.getparent()
     if parent is None:
-        return []  # Marker is at the root, no parent.
+        return (None, [])  # Marker is at the root, no parent.
 
     # 5. Find the schema definition for the parent element.
     try:
         # We use schema.find() to get the XSD definition of the parent tag.
         parent_xsd_element = schema.find(parent.tag)
         if parent_xsd_element is None:
-            return []
+            return (parent, [])
     except KeyError:
-        return []  # Parent tag not found in schema.
+        return (parent, [])  # Parent tag not found in schema.
 
     # 6. Extract the list of all possible child elements from the schema definition.
     #    The .type.content object is an XsdGroup that contains the content model.
@@ -396,7 +395,7 @@ def _get_element_context_at_position(
     # For a more advanced implementation, you would filter out elements that
     # already exist if they cannot appear more than once.
     # For now, we return all possibilities.
-    return sorted(list(set(valid_children)))
+    return (parent, sorted(list(set(valid_children))))
 
 
 @server.feature("textDocument/completion")
@@ -434,7 +433,9 @@ def completion(ls, params):
     logging.info(f"got schema {schema}")
     logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
 
-    completions = _get_element_context_at_position(schema, content, pos)
+    parent_element, completions = _get_element_context_at_position(
+        schema, content, pos
+    )
     logging.info(f"Found {len(completions)} completions: {completions}")
 
     items = [
