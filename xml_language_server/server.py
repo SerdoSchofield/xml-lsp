@@ -244,10 +244,12 @@ def did_change(ls, params):
             logging.error("Could not read file %s", uri)
             return
 
-    current_content = session_cache[uri]["content"]
-    new_content = _apply_incremental_changes(current_content, params.content_changes)
-    session_cache[uri]["content"] = new_content
     session = session_cache[uri]
+
+    # infer the content
+    current_content = session["content"]
+    new_content = _apply_incremental_changes(current_content, params.content_changes)
+    session["content"] = new_content
 
     # Schema lookup
     root_uri = uri.rpartition("/")[0]
@@ -257,6 +259,9 @@ def did_change(ls, params):
         root_element_name = workspace["roots"].get(uri)
         if root_element_name:
             schema = workspace["schemas"].get(root_element_name)
+
+    if not schema:
+        return None
 
     # Immediate validation
     _validate_document(ls, uri, new_content, schema)
