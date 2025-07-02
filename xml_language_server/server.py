@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import re
@@ -115,9 +116,10 @@ def _get_schema_for_doc(ls, uri, content):
     for searchpath in searchpaths:
         schema_path = os.path.join(searchpath, f"{root_element_name}.xsd")
         if os.path.exists(schema_path):
-            logging.info(f"Found schema for {root_element_name} at {schema_path}")
+            logging.info(f"Found schema doc for {root_element_name} at {schema_path}")
             try:
                 schema = xmlschema.XMLSchema11(schema_path)
+                logging.info(f"   Defined elements: {list(schema.elements.keys())}")
                 # Cache it
                 workspace["schemas"][root_element_name] = schema
                 return schema
@@ -315,6 +317,72 @@ def did_save(ls, params):
         logging.error(f"Could not read file on save for {uri}: {e}")
 
 
+def _get_valid_elements_at_position(schema: XMLSchema, xml_content: str, position: int):
+    """
+    Finds the list of valid child elements at a specific position in an XML string.
+
+    Args:
+        schema: A loaded xmlschema.XMLSchema object.
+        xml_content: The potentially incomplete XML document as a string.
+        position: The integer position of the cursor.
+
+    Returns:
+        A list of valid element tag names, or an empty list if none are found.
+    """
+    # 1. Insert a temporary marker element at the cursor's position.
+    #    This gives us a node to find in the parsed tree.
+    marker_tag = "completion_marker_fa6fb971-e37d-4316-84ed-27507cf687b8"
+    xml_with_marker = f"{xml_content[:position]}<{marker_tag}/>{xml_content[position:]}"
+
+    # 2. Parse the potentially broken XML using lxml's recovering parser.
+    parser = ET.XMLParser(recover=True)
+    try:
+        root = ET.fromstring(xml_with_marker.encode("utf-8"), parser)
+    except ET.XMLSyntaxError:
+        return []  # The document is too broken to parse even with recovery.
+
+    # 3. Find the marker element in the resulting tree.
+    marker = root.find(f".//{marker_tag}")
+    if marker is None:
+        return []  # Could not find the marker.
+
+    # 4. Get the parent of the marker. This is our context.
+    parent = marker.getparent()
+    if parent is None:
+        return []  # Marker is at the root, no parent.
+
+    # 5. Find the schema definition for the parent element.
+    try:
+        # We use schema.find() to get the XSD definition of the parent tag.
+        parent_xsd_element = schema.find(parent.tag)
+        if parent_xsd_element is None:
+            return []
+    except KeyError:
+        return []  # Parent tag not found in schema.
+
+    # 6. Extract the list of all possible child elements from the schema definition.
+    #    The .type.content object is an XsdGroup that contains the content model.
+    #    We can iterate over it to get all possible child elements.
+    valid_children = []
+    content_model = parent_xsd_element.type.content
+
+    if hasattr(content_model, "iter_elements"):
+        for element_node in content_model.iter_elements():
+            # The 'name' of each element node is the valid tag.
+            valid_children.append(element_node.name)
+
+    # As your schema uses extensions, we also need to check the base type's content.
+    base_type = getattr(parent_xsd_element.type, "base_type", None)
+    if base_type and hasattr(base_type.content, "iter_elements"):
+        for element_node in base_type.content.iter_elements():
+            valid_children.append(element_node.name)
+
+    # For a more advanced implementation, you would filter out elements that
+    # already exist if they cannot appear more than once.
+    # For now, we return all possibilities.
+    return sorted(list(set(valid_children)))
+
+
 @server.feature("textDocument/completion")
 def completion(ls, params):
     """Provide completion suggestions."""
@@ -329,48 +397,30 @@ def completion(ls, params):
     content = session_cache[uri]["content"]
 
     root_uri = uri.rpartition("/")[0]
+    logging.info(f"getting workspace for {root_uri}")
     workspace = ls.workspaces.get(root_uri)
     if not workspace:
         logging.info(f"no workspace")
         return CompletionList(is_incomplete=False, items=[])
 
+    logging.info(f"getting root element name for {uri}")
     root_element_name = workspace["roots"].get(uri)
     if not root_element_name:
         logging.info(f"no root_element_name")
         return CompletionList(is_incomplete=False, items=[])
 
+    logging.info(f"getting schema for root element {root_element_name}")
     schema = workspace["schemas"].get(root_element_name)
     if not schema:
         logging.info(f"no schema")
         return CompletionList(is_incomplete=False, items=[])
 
-    parser = ET.XMLParser(recover=True)  # sourceline=True
-    try:
-        root = ET.fromstring(content.encode("utf-8"), parser)
-    except ET.XMLSyntaxError as e:
-        logging.info(f"failed to parse {e}")
-        return CompletionList(is_incomplete=False, items=[])
+    logging.info(f"got schema {schema}")
+    logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
 
-    target_line = pos.line + 1
-    context_lxml_element = _find_element_at_position(root, target_line)
-
-    if context_lxml_element is None:
-        logging.info(f"failed to find an element")
-        return CompletionList(is_incomplete=False, items=[])
-
-    try:
-        element_map = {
-            # AI! This isn't working.  I get an error at runtime.
-            # "root:iter_decode failed during completion: 'dict' object has no attribute 'elem'"
-            # What's wrong?  Fix this.
-            x.elem: x.xsd_element
-            for x in schema.iter_decode(root, validation="lax")
-        }
-    except Exception as e:
-        logging.error(f"iter_decode failed during completion: {e}")
-        return CompletionList(is_incomplete=False, items=[])
-
-    context_xsd_element = element_map.get(context_lxml_element)
+    # AI! convert the pos variable into a character_position.
+    #
+    completions = _get_valid_elements_at_position(schema, content, character_position)
 
     logging.info(f"iterating elements....")
     items = []
