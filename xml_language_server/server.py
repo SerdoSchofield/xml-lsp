@@ -45,6 +45,11 @@ def did_open(ls, params):
     """Document opened."""
     uri = params.text_document.uri
     text = params.text_document.text
+    # AI! Modify this logic. Instead of using the text field,
+    # extract the file path from the uri.  The uri will be structured like
+    # file:///path/to/file .
+    # Remove the "file://" prefix and use the remaining as the path to the file to open.
+    # Ignore (don't use) the text field.
     logging.info(f"File opened: {uri}")
 
     if not ls.schema:
