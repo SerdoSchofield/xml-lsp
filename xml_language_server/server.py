@@ -1,6 +1,7 @@
 import logging
 import re
 
+import lxml.etree as ET
 import xmlschema
 from lsprotocol.types import (
     Diagnostic,
@@ -57,7 +58,9 @@ def _validate_document(ls, uri):
 
     try:
         file_path = to_fs_path(uri)
-        validation_errors = list(ls.schema.iter_errors(file_path))
+        xml_doc = ET.parse(file_path)
+
+        validation_errors = list(ls.schema.iter_errors(xml_doc))
         if not validation_errors:
             logging.info(f"Validation successful for {uri}: No errors found.")
             ls.publish_diagnostics(uri, [])
@@ -67,27 +70,31 @@ def _validate_document(ls, uri):
                 # The xmlschema library provides 1-based line/column numbers.
                 # LSP positions are 0-based.
                 logging.info(f"Schema validation error: {error.message}")
-                if hasattr(error, "line"):
-                    logging.info(f"  at line={error.line}, column={error.column}")
-                    line = (error.line or 1) - 1
-                    column = (error.column or 1) - 1
+                if hasattr(error, "sourceline"):
+                    logging.info(f"  at line={error.sourceline}")
+                    line = error.sourceline or 1
+                    column = 1
                 else:
-                    line = 0
-                    column = 0
-                    if hasattr(error, "path"):
-                        logging.info(f"  path: {error.path}")
-                    if hasattr(error, "reason"):
-                        logging.info(f"  reason: {error.reason}")
-                        match = re.search(r"position (\d+)", error.reason)
-                        if match:
-                            # Per instruction, using the 0-based child position as line number.
-                            line = int(match.group(1))
+                    line = 1
+                    column = 1
+
+                if hasattr(error, "path"):
+                    logging.info(f"  path: {error.path}")
+                if hasattr(error, "reason"):
+                    logging.info(f"  reason: {error.reason}")
+                    # Eg "Unexpected child with tag 'TRemove' at position 3."
+                    match = re.search(r"position (\d+)", error.reason)
+                    if match:
+                        position = int(match.group(1))
+                        # AI! position is actually the index of the element in the list of children.
+                        # How to resolve this to a LINE NUMBER !??!
+                        line = line + position - 1
 
                 pos = Position(line=line, character=column)
 
                 diagnostic = Diagnostic(
                     range=Range(start=pos, end=pos),
-                    message=error.message,
+                    message=error.reason,
                     severity=DiagnosticSeverity.Error,
                 )
                 diagnostics.append(diagnostic)
