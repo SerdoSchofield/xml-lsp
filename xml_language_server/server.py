@@ -130,6 +130,18 @@ def _get_schema_for_doc(ls, uri, content):
     return None
 
 
+def _find_element_at_position(element, line):
+    """Recursively find the deepest element at a given line number (1-based)."""
+    candidate = None
+    if hasattr(element, "sourceline") and element.sourceline and element.sourceline <= line:
+        candidate = element
+        for child in element:
+            child_candidate = _find_element_at_position(child, line)
+            if child_candidate is not None:
+                candidate = child_candidate
+    return candidate
+
+
 def _validate_document(ls, uri, content, schema):
     """Validate the document against the schema."""
     if not schema:
@@ -302,18 +314,65 @@ def did_save(ls, params):
 @server.feature("textDocument/completion")
 def completion(ls, params):
     """Provide completion suggestions."""
-    logging.info(f"completion")
-    return CompletionList(
-        is_incomplete=False,
-        items=[
-            CompletionItem(
-                label="NewElement",
-                kind=CompletionItemKind.Struct,
-                detail="Add a new element",
-                insert_text="NewElement",
+    uri = params.text_document.uri
+    pos = params.position
+    logging.info(f"completion for {uri} at {pos.line}:{pos.character}")
+
+    if uri not in session_cache or "content" not in session_cache[uri]:
+        return CompletionList(is_incomplete=False, items=[])
+
+    content = session_cache[uri]["content"]
+
+    root_uri = uri.rpartition("/")[0]
+    workspace = ls.workspaces.get(root_uri)
+    if not workspace:
+        return CompletionList(is_incomplete=False, items=[])
+
+    root_element_name = workspace["roots"].get(uri)
+    if not root_element_name:
+        return CompletionList(is_incomplete=False, items=[])
+
+    schema = workspace["schemas"].get(root_element_name)
+    if not schema:
+        return CompletionList(is_incomplete=False, items=[])
+
+    parser = ET.XMLParser(recover=True, sourceline=True)
+    try:
+        root = ET.fromstring(content.encode("utf-8"), parser)
+    except ET.XMLSyntaxError:
+        return CompletionList(is_incomplete=False, items=[])
+
+    target_line = pos.line + 1
+    context_lxml_element = _find_element_at_position(root, target_line)
+
+    if context_lxml_element is None:
+        return CompletionList(is_incomplete=False, items=[])
+
+    try:
+        element_map = {x.elem: x.xsd_element for x in schema.iter_decode(root, validation="lax")}
+    except Exception as e:
+        logging.error(f"iter_decode failed during completion: {e}")
+        return CompletionList(is_incomplete=False, items=[])
+
+    context_xsd_element = element_map.get(context_lxml_element)
+
+    items = []
+    if context_xsd_element and hasattr(context_xsd_element.type, "content"):
+        for child_xsd in context_xsd_element.type.content.iter_elements():
+            detail = child_xsd.name
+            if child_xsd.annotation and child_xsd.annotation.documentation:
+                detail = child_xsd.annotation.documentation[0].text
+
+            items.append(
+                CompletionItem(
+                    label=child_xsd.name,
+                    kind=CompletionItemKind.Struct,
+                    detail=detail,
+                    insert_text=child_xsd.name,
+                )
             )
-        ],
-    )
+
+    return CompletionList(is_incomplete=False, items=items)
 
 
 def main():
