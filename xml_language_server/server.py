@@ -133,7 +133,11 @@ def _get_schema_for_doc(ls, uri, content):
 def _find_element_at_position(element, line):
     """Recursively find the deepest element at a given line number (1-based)."""
     candidate = None
-    if hasattr(element, "sourceline") and element.sourceline and element.sourceline <= line:
+    if (
+        hasattr(element, "sourceline")
+        and element.sourceline
+        and element.sourceline <= line
+    ):
         candidate = element
         for child in element:
             child_candidate = _find_element_at_position(child, line)
@@ -319,6 +323,7 @@ def completion(ls, params):
     logging.info(f"completion for {uri} at {pos.line}:{pos.character}")
 
     if uri not in session_cache or "content" not in session_cache[uri]:
+        logging.info(f"no session or no content")
         return CompletionList(is_incomplete=False, items=[])
 
     content = session_cache[uri]["content"]
@@ -326,36 +331,48 @@ def completion(ls, params):
     root_uri = uri.rpartition("/")[0]
     workspace = ls.workspaces.get(root_uri)
     if not workspace:
+        logging.info(f"no workspace")
         return CompletionList(is_incomplete=False, items=[])
 
     root_element_name = workspace["roots"].get(uri)
     if not root_element_name:
+        logging.info(f"no root_element_name")
         return CompletionList(is_incomplete=False, items=[])
 
     schema = workspace["schemas"].get(root_element_name)
     if not schema:
+        logging.info(f"no schema")
         return CompletionList(is_incomplete=False, items=[])
 
-    parser = ET.XMLParser(recover=True, sourceline=True)
+    parser = ET.XMLParser(recover=True)  # sourceline=True
     try:
         root = ET.fromstring(content.encode("utf-8"), parser)
-    except ET.XMLSyntaxError:
+    except ET.XMLSyntaxError as e:
+        logging.info(f"failed to parse {e}")
         return CompletionList(is_incomplete=False, items=[])
 
     target_line = pos.line + 1
     context_lxml_element = _find_element_at_position(root, target_line)
 
     if context_lxml_element is None:
+        logging.info(f"failed to find an element")
         return CompletionList(is_incomplete=False, items=[])
 
     try:
-        element_map = {x.elem: x.xsd_element for x in schema.iter_decode(root, validation="lax")}
+        element_map = {
+            # AI! This isn't working.  I get an error at runtime.
+            # "root:iter_decode failed during completion: 'dict' object has no attribute 'elem'"
+            # What's wrong?  Fix this.
+            x.elem: x.xsd_element
+            for x in schema.iter_decode(root, validation="lax")
+        }
     except Exception as e:
         logging.error(f"iter_decode failed during completion: {e}")
         return CompletionList(is_incomplete=False, items=[])
 
     context_xsd_element = element_map.get(context_lxml_element)
 
+    logging.info(f"iterating elements....")
     items = []
     if context_xsd_element and hasattr(context_xsd_element.type, "content"):
         for child_xsd in context_xsd_element.type.content.iter_elements():
