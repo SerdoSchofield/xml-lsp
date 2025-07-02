@@ -285,6 +285,20 @@ def did_change(ls, params):
     logging.info(f"Scheduled deferred validation for {uri}.")
 
 
+@server.feature("textDocument/didSave")
+def did_save(ls, params):
+    """Document saved, so refresh content cache."""
+    uri = params.text_document.uri
+    logging.info(f"didSave: {uri}, refreshing content cache.")
+    try:
+        file_path = to_fs_path(uri)
+        with open(file_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        session_cache[uri] = {"content": content}
+    except Exception as e:
+        logging.error(f"Could not read file on save for {uri}: {e}")
+
+
 @server.feature("textDocument/completion")
 def completion(ls, params):
     """Provide completion suggestions."""
