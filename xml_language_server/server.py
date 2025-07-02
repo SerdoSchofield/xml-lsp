@@ -219,10 +219,10 @@ def did_change(ls, params):
         else:
             logging.warning(f"No content found for {doc_uri} in debounced validation.")
 
-    timer = threading.Timer(8.0, debounced_validation, args=[ls, uri])
+    timer = threading.Timer(4.0, debounced_validation, args=[ls, uri])
     session["timer"] = timer
     timer.start()
-    logging.info(f"Scheduled debounced validation for {uri} in 8s.")
+    logging.info(f"Scheduled debounced validation for {uri}.")
 
 
 @server.feature("textDocument/completion")
