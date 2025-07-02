@@ -434,14 +434,10 @@ def completion(ls, params):
     completions = _get_valid_elements_at_position(schema, content, pos)
     logging.info(f"Found {len(completions)} completions: {completions}")
 
-    # AI! in python, is there a map function that can simply map the completions list into an items list of the proper shape?
-    items = []
-    for label in completions:
-        items.append(
-            CompletionItem(
-                label=label, kind=CompletionItemKind.Struct, insert_text=label
-            )
-        )
+    items = [
+        CompletionItem(label=label, kind=CompletionItemKind.Struct, insert_text=label)
+        for label in completions
+    ]
 
     return CompletionList(is_incomplete=False, items=items)
 
