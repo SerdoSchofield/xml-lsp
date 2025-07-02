@@ -43,7 +43,26 @@ def initialize(ls, params):
 @server.feature("textDocument/didOpen")
 def did_open(ls, params):
     """Document opened."""
-    logging.info(f"File opened: {params.text_document.uri}")
+    uri = params.text_document.uri
+    text = params.text_document.text
+    logging.info(f"File opened: {uri}")
+
+    if not ls.schema:
+        logging.info("No schema available, skipping validation.")
+        return
+
+    try:
+        validation_errors = list(ls.schema.iter_errors(text))
+        if not validation_errors:
+            logging.info(f"Validation successful for {uri}: No errors found.")
+        else:
+            logging.warning(
+                f"Validation of {uri} found {len(validation_errors)} errors:"
+            )
+            for error in validation_errors:
+                logging.warning(f"  - {error}")
+    except Exception as e:
+        logging.error(f"Error during validation of {uri}: {e}", exc_info=True)
 
 
 def main():
