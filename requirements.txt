@@ -1,0 +1,5 @@
+xmlschema
+lxml
+cachetools
+pygls
+lsprotocol
