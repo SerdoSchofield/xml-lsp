@@ -1,4 +1,5 @@
 import logging
+import xmlschema
 from pygls.server import LanguageServer
 
 # Configure logging to a file for debugging.
@@ -15,9 +16,16 @@ def initialize(ls, params):
     initialization_options = params.initialization_options or {}
     schema_path = initialization_options.get("schema")
     ls.schema_path = schema_path
+    ls.schema = None
 
     if schema_path:
         logging.info(f"Schema path set to: {schema_path}")
+        try:
+            ls.schema = xmlschema.XMLSchema11(schema_path)
+            logging.info(f"Successfully loaded schema: {schema_path}")
+        except Exception as e:
+            # Using error level for exceptions.
+            logging.error(f"Failed to load schema from {schema_path}: {e}", exc_info=True)
     else:
         logging.info("No schema path provided.")
 
