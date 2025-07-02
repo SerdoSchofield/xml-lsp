@@ -14,6 +14,12 @@ def initialize(ls, params):
     return None
 
 
+@server.feature('textDocument/didOpen')
+def did_open(ls, params):
+    """Document opened."""
+    logging.info(f"File opened: {params.text_document.uri}")
+
+
 def main():
     """The main entry point for the server."""
     logging.info('Starting XML language server.')
