@@ -20,7 +20,7 @@ logging.basicConfig(
     filename="/tmp/xml-language-server.log", level=logging.DEBUG, filemode="w"
 )
 
-server = LanguageServer("xml-language-server", "v0.1")
+server = LanguageServer("xml-language-server", "v0.2")
 
 
 # Cache for storing document-specific sessions
@@ -177,10 +177,10 @@ def did_change(ls, params):
         logging.info(f"Running debounced validation for {doc_uri}.")
         _validate_document(ls_instance, doc_uri)
 
-    timer = threading.Timer(8.0, debounced_validation, args=[ls, uri])
+    timer = threading.Timer(5.0, debounced_validation, args=[ls, uri])
     session["timer"] = timer
     timer.start()
-    logging.info(f"Scheduled debounced validation for {uri} in 8s.")
+    logging.info(f"Scheduled debounced validation for {uri}.")
 
 
 def main():
