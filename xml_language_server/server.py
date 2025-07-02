@@ -66,15 +66,12 @@ def _validate_document(ls, uri):
             for error in validation_errors:
                 # The xmlschema library provides 1-based line/column numbers.
                 # LSP positions are 0-based.
-                # line = (error.line or 1) - 1
-                # column = (error.column or 1) - 1
+                logging.info(f"Schema validation error: {error.message}")
+                if error.line:
+                    logging.info(f"  at line={error.line}, column={error.column}")
 
-                # AI! Here, print out the error information to the log.
-                # There may or may not be line and column information available
-                # on the error.
-
-                line = 1
-                column = 1
+                line = (error.line or 1) - 1
+                column = (error.column or 1) - 1
 
                 pos = Position(line=line, character=column)
 
