@@ -1,8 +1,10 @@
 import logging
 import re
+import threading
 
 import lxml.etree as ET
 import xmlschema
+from cachetools import TTLCache
 from lsprotocol.types import (
     Diagnostic,
     DiagnosticSeverity,
@@ -19,6 +21,11 @@ logging.basicConfig(
 )
 
 server = LanguageServer("xml-language-server", "v0.1")
+
+
+# Cache for storing document-specific sessions
+# Sessions expire after 180 seconds of inactivity
+session_cache = TTLCache(maxsize=128, ttl=180)
 
 
 @server.feature("initialize")
@@ -141,7 +148,8 @@ def _validate_document(ls, uri):
 def did_open(ls, params):
     """Document opened."""
     uri = params.text_document.uri
-    logging.info(f"File opened: {uri}")
+    logging.info(f"File opened: {uri}, creating session.")
+    session_cache[uri] = {}
     _validate_document(ls, uri)
 
 
@@ -150,7 +158,29 @@ def did_change(ls, params):
     """Document changed."""
     uri = params.text_document.uri
     logging.info(f"File changed: {uri}")
+
+    # Ensure session exists, refreshing its TTL
+    if uri not in session_cache:
+        logging.info(f"Session not found for {uri}, creating one.")
+        session_cache[uri] = {}
+    session = session_cache[uri]
+
+    # Immediate validation
     _validate_document(ls, uri)
+
+    # Debounced validation with a timer
+    if session.get("timer"):
+        session["timer"].cancel()
+        logging.info(f"Cancelled previous timer for {uri}.")
+
+    def debounced_validation(ls_instance, doc_uri):
+        logging.info(f"Running debounced validation for {doc_uri}.")
+        _validate_document(ls_instance, doc_uri)
+
+    timer = threading.Timer(8.0, debounced_validation, args=[ls, uri])
+    session["timer"] = timer
+    timer.start()
+    logging.info(f"Scheduled debounced validation for {uri} in 8s.")
 
 
 def main():
