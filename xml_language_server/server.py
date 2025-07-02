@@ -27,7 +27,7 @@ def initialize(ls, params):
         try:
             ls.schema = xmlschema.XMLSchema11(schema_path)
             logging.info(f"Successfully loaded schema: {schema_path}")
-            logging.info(f"   Defined elements: {list(schema.elements.keys())}")
+            logging.info(f"   Defined elements: {list(ls.schema.elements.keys())}")
 
         except Exception as e:
             # Using error level for exceptions.
