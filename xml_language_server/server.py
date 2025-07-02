@@ -433,10 +433,13 @@ def completion(ls, params):
     logging.info(f"got schema {schema}")
     logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
 
-    parent_element, completions = _get_element_context_at_position(
-        schema, content, pos
-    )
+    parent_element, completions = _get_element_context_at_position(schema, content, pos)
     logging.info(f"Found {len(completions)} completions: {completions}")
+
+    # AI! modify this to add one more item to the items list:
+    # CompletionItem(
+    #   label=f"close {parent_element.name}", kind=CompletionItemKind.Struct, insert_text=f"</{parent_element.name}>"
+    # )
 
     items = [
         CompletionItem(
