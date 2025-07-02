@@ -1,6 +1,13 @@
 import logging
+import re
 
 import xmlschema
+from lsprotocol.types import (
+    Diagnostic,
+    DiagnosticSeverity,
+    Position,
+    Range,
+)
 from pygls.server import LanguageServer
 from pygls.uris import to_fs_path
 
@@ -45,6 +52,7 @@ def _validate_document(ls, uri):
     """Validate the document against the schema."""
     if not ls.schema:
         logging.info("No schema available, skipping validation.")
+        ls.publish_diagnostics(uri, [])
         return
 
     try:
@@ -52,6 +60,7 @@ def _validate_document(ls, uri):
         validation_errors = list(ls.schema.iter_errors(file_path))
         if not validation_errors:
             logging.info(f"Validation successful for {uri}: No errors found.")
+            ls.publish_diagnostics(uri, [])
         else:
             logging.warning(
                 f"Validation of {uri} found {len(validation_errors)} errors:"
@@ -59,18 +68,26 @@ def _validate_document(ls, uri):
             for error in validation_errors:
                 logging.warning(f"  - {error}")
     except Exception as e:
-        # AI!
-        # The exception will be of the form:
-        # "invalid XML syntax: not well-formed (invalid token): line 4, column 2"
-        #
-        # Extract the line and column number from the exception, and send back a
-        # publishDiagnostics notification, passing the document's URI and a Diagnostic object,
-        # containing the appropriate range, the message , and the severity. In this case,
-        # the severity is Error.  The range is determine by the line and column you
-        # extracted above.  The message should be the
-        # full exception message, with the line and column information trimmed off.
-        # In the above example, the message returned in the Diagnostic should be:
-        # "invalid XML syntax: not well-formed (invalid token)"
+        msg = str(e)
+        diagnostics = []
+        match = re.search(r": line (\d+), column (\d+)", msg)
+
+        if match:
+            line = int(match.group(1))
+            column = int(match.group(2))
+            error_message = msg[: match.start()]
+
+            # LSP positions are 0-based.
+            pos = Position(line=line - 1, character=column - 1)
+
+            diagnostic = Diagnostic(
+                range=Range(start=pos, end=pos),
+                message=error_message,
+                severity=DiagnosticSeverity.Error,
+            )
+            diagnostics.append(diagnostic)
+
+        ls.publish_diagnostics(uri, diagnostics)
         logging.error(f"Error during validation of {uri}: {e}", exc_info=True)
 
 
