@@ -11,6 +11,16 @@ server = LanguageServer("xml-language-server", "v0.1")
 def initialize(ls, params):
     """Server is initialized."""
     logging.info("XML Language Server initialized.")
+
+    initialization_options = params.initialization_options or {}
+    schema_path = initialization_options.get("schema")
+    ls.schema_path = schema_path
+
+    if schema_path:
+        logging.info(f"Schema path set to: {schema_path}")
+    else:
+        logging.info("No schema path provided.")
+
     return None
 
 
