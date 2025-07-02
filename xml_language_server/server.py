@@ -62,11 +62,26 @@ def _validate_document(ls, uri):
             logging.info(f"Validation successful for {uri}: No errors found.")
             ls.publish_diagnostics(uri, [])
         else:
-            logging.warning(
-                f"Validation of {uri} found {len(validation_errors)} errors:"
-            )
+            diagnostics = []
             for error in validation_errors:
-                logging.warning(f"  - {error}")
+                # The xmlschema library provides 1-based line/column numbers.
+                # LSP positions are 0-based.
+                line = (error.line or 1) - 1
+                column = (error.column or 1) - 1
+
+                pos = Position(line=line, character=column)
+
+                diagnostic = Diagnostic(
+                    range=Range(start=pos, end=pos),
+                    message=error.message,
+                    severity=DiagnosticSeverity.Error,
+                )
+                diagnostics.append(diagnostic)
+
+            logging.warning(
+                f"Validation of {uri} found {len(diagnostics)} errors."
+            )
+            ls.publish_diagnostics(uri, diagnostics)
     except Exception as e:
         msg = str(e)
         diagnostics = []
