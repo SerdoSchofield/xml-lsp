@@ -2,6 +2,7 @@ import logging
 
 import xmlschema
 from pygls.server import LanguageServer
+from pygls.uris import to_fs_path
 
 # Configure logging to a file for debugging.
 # This is useful as stdout is used for LSP communication.
@@ -44,12 +45,6 @@ def initialize(ls, params):
 def did_open(ls, params):
     """Document opened."""
     uri = params.text_document.uri
-    text = params.text_document.text
-    # AI! Modify this logic. Instead of using the text field,
-    # extract the file path from the uri.  The uri will be structured like
-    # file:///path/to/file .
-    # Remove the "file://" prefix and use the remaining as the path to the file to open.
-    # Ignore (don't use) the text field.
     logging.info(f"File opened: {uri}")
 
     if not ls.schema:
@@ -57,7 +52,8 @@ def did_open(ls, params):
         return
 
     try:
-        validation_errors = list(ls.schema.iter_errors(text))
+        file_path = to_fs_path(uri)
+        validation_errors = list(ls.schema.iter_errors(file_path))
         if not validation_errors:
             logging.info(f"Validation successful for {uri}: No errors found.")
         else:
