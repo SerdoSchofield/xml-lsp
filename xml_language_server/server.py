@@ -6,6 +6,9 @@ import lxml.etree as ET
 import xmlschema
 from cachetools import TTLCache
 from lsprotocol.types import (
+    CompletionItem,
+    CompletionItemKind,
+    CompletionList,
     Diagnostic,
     DiagnosticSeverity,
     Position,
@@ -220,6 +223,22 @@ def did_change(ls, params):
     session["timer"] = timer
     timer.start()
     logging.info(f"Scheduled debounced validation for {uri} in 8s.")
+
+
+@server.feature("textDocument/completion")
+def completion(ls, params):
+    """Provide completion suggestions."""
+    return CompletionList(
+        is_incomplete=False,
+        items=[
+            CompletionItem(
+                label="NewElement",
+                kind=CompletionItemKind.Struct,
+                detail="Add a new element",
+                insert_text="NewElement",
+            )
+        ],
+    )
 
 
 def main():
