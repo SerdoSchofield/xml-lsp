@@ -67,11 +67,19 @@ def _validate_document(ls, uri):
                 # The xmlschema library provides 1-based line/column numbers.
                 # LSP positions are 0-based.
                 logging.info(f"Schema validation error: {error.message}")
+                # AI! I am seeing an error in the log file, like this:
+                # ERROR:root:Error during validation of file:///usr/local/google/home/dchiesa/archivist_backup_241016_032833/dev/apiproxies/b67169710-test1/apiproxy/policies/AM-Response.xml: 'XMLSchemaChildrenValidationError' object has no attribute 'line'
+                #
+                # I believe it is coming from the following line. Fix this.
                 if error.line:
                     logging.info(f"  at line={error.line}, column={error.column}")
 
-                line = (error.line or 1) - 1
-                column = (error.column or 1) - 1
+                if error.line:
+                    line = (error.line or 1) - 1
+                    column = (error.column or 1) - 1
+                else:
+                    line = 1
+                    column = 1
 
                 pos = Position(line=line, character=column)
 
