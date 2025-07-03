@@ -187,16 +187,19 @@ def _get_schema_for_doc(ls, uri, content):
 
         if schema_path:
             try:
-                # AI! for each schema loaded here, before loading it,
-                # read the XSD file and extract the targetNamespace attribute on the
-                # root element.  If it exists, then extract the value of it, and
-                # load the schema like so:
-                #
-                # schema = xmlschema.XMLSchema11(schema_path, default_namespace=EXTRACED_TARGET_NAMESPACE))
-                #
-                # If there is no targetNamespace attribute, then load the schema with the current logic.
-                #
-                schema = xmlschema.XMLSchema11(schema_path)
+                xsd_root = ET.parse(schema_path).getroot()
+                target_namespace = xsd_root.get("targetNamespace")
+
+                if target_namespace:
+                    logging.info(
+                        f"Loading schema {schema_path} with targetNamespace: {target_namespace}"
+                    )
+                    schema = xmlschema.XMLSchema11(
+                        schema_path, default_namespace=target_namespace
+                    )
+                else:
+                    schema = xmlschema.XMLSchema11(schema_path)
+
                 logging.info(f"Successfully loaded schema {schema_path}")
                 logging.info(f"   Defined elements: {list(schema.elements.keys())}")
                 # Cache it
