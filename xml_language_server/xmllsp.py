@@ -343,8 +343,7 @@ def _validate_document(ls, uri, content, schema, default_xmlns):
             error_message = msg[: match.start()]
 
             # LSP positions are 0-based.
-            # For some reason we need to subtract 2?, not just 1
-            pos = Position(line=line - 2, character=column - 1)
+            pos = Position(line=line - 1, character=column - 1)
 
             diagnostic = Diagnostic(
                 range=Range(start=pos, end=pos),
@@ -519,6 +518,34 @@ def _namespace_for_element(elt):
     return ""
 
 
+def _get_elements_from_type(xsd_type, default_xmlns, visited_types=None):
+    """Recursively get all element names from an XSD type, following base types."""
+    if visited_types is None:
+        visited_types = set()
+
+    if not xsd_type or xsd_type in visited_types:
+        return []
+
+    visited_types.add(xsd_type)
+
+    valid_children = []
+    if hasattr(xsd_type, "content") and hasattr(xsd_type.content, "iter_elements"):
+        for element_node in xsd_type.content.iter_elements():
+            elt_xmlns = _namespace_for_element(element_node)
+            if elt_xmlns == default_xmlns:
+                valid_children.append(_local_name_for_element(element_node))
+            else:
+                valid_children.append(element_node.name)
+
+    base_type = getattr(xsd_type, "base_type", None)
+    if base_type:
+        valid_children.extend(
+            _get_elements_from_type(base_type, default_xmlns, visited_types)
+        )
+
+    return valid_children
+
+
 def _get_element_context_at_position(
     schema: xmlschema.XMLSchema, default_namespace: str, xml_content: str, pos: Position
 ):
@@ -617,34 +644,9 @@ def _get_element_context_at_position(
     # are not helpful.
 
     logging.info(f"found parent element in the schema {parent_xsd_element}")
-    valid_children = []
-    content_model = parent_xsd_element.type.content
-
-    if hasattr(content_model, "iter_elements"):
-        for element_node in content_model.iter_elements():
-            elt_xmlns = _namespace_for_element(element_node)
-            if elt_xmlns == default_xmlns:
-                valid_children.append(_local_name_for_element(element_node))
-            else:
-                valid_children.append(element_node.name)
-    else:
-        logging.info(f"content_model has no iter_elements")
-
-    # Some schema uses extensions, we also need to check the base type's content.
-    # TODO: make this recurse.
-    base_type = getattr(parent_xsd_element.type, "base_type", None)
-    if base_type:
-        if hasattr(base_type.content, "iter_elements"):
-            for element_node in base_type.content.iter_elements():
-                elt_xmlns = _namespace_for_element(element_node)
-                if elt_xmlns == default_xmlns:
-                    valid_children.append(_local_name_for_element(element_node))
-                else:
-                    valid_children.append(element_node.name)
-        else:
-            logging.info(f"base_type content has no iter_elements")
-    else:
-        logging.info(f"no base_type")
+    valid_children = _get_elements_from_type(
+        parent_xsd_element.type, default_xmlns
+    )
 
     # For a more advanced implementation, you would filter out elements that
     # already exist if they cannot appear more than once.
