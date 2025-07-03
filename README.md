@@ -2,17 +2,20 @@
 
 Wednesday,  2 July 2025, 20:58
 
-I looked but just  could not find a viable LSP for XML anywhere.
+I looked but could not find an LSP for XML that would suit my needs.
 
-There is something in the Eclipse project, Lemminx, which I guess Redhat
-manages.  But it does not support XSD 1.1 and it's sort of brittle and
-non-extensible.  When I tried adding XSD 1.1 capability, it broke and threw some
-of the most obscure stacktraces I've ever seen.  Completely unworkable.
+There is something managed out of the Eclipse project,
+[Lemminx](https://github.com/eclipse-lemminx/lemminx), which I guess Redhat
+manages. But it does not support XSD 1.1 and it's sort of brittle and
+non-extensible. When I tried adding XSD 1.1 capability, it broke and threw some
+of the most obscure stacktraces I've ever seen. I didn't have the appetite to
+go sort that out.
 
 I didn't find any others.
 
 One night, pretty late, I thought _it can't be that hard_, and I started writing
-an LSP, with Gemini's help, in python, based on the xmlschema module and pygls.
+an LSP, with Gemini's help, in python, based on the xmlschema module and
+pygls. And actually, it _wasn't that hard_.
 
 This thing is a homemade wonder.
 
@@ -23,10 +26,18 @@ suggestions too. It works for me for the XML files I need to modify.
 It does validation and completion. It sends back diagnostics to let the editor
 highlight lines that are problematic.
 
-Tested (tried, really) with:
+Tested (tried, really), _only in emacs v30.1_  with nxml-mode and :
  - a bunch of Apigee files
  - MSBuild .csproj
  - maven pom.xml
+
+Actually I think the default capability of nxml to use rnc schema, is still probably 
+preferred. But, most XML files that I work with do not have rnc schema, and the 
+"just convert your XSD to rnc" is not a rabbit hole I want to descend into. 
+
+So I would say, if you can use nxml with rnc, do it.  If you have only XSD, then 
+maybe this will work. 
+
 
 
 ## Running the server
@@ -188,4 +199,16 @@ This assumes you have extracted the xmllsp into ~/xmllsp , and you created a pyt
 
 The LSP does send back publishDiagnostic messages for validation errors.
 
+
+## License
+
+This material is [Copyright © 2025 Google LLC](./NOTICE).
+and is licensed under the [Apache 2.0 License](LICENSE). This includes the Java
+code as well as the API Proxy configuration.
+
+
+## Disclaimer
+
+This example is not an official Google product, nor is it part of an
+official Google product.
 
