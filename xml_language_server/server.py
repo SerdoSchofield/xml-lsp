@@ -47,8 +47,9 @@ def initialize(ls, params):
         logging.info(f"Workspace root: {root_uri}")
         ls.workspaces[root_uri] = {
             "options": initialization_options,
-            "schemas": {},
-            "roots": {},
+            "schemas_for_xsdpath": {},  # relates schemapath to schema
+            "schemapaths_for_uri": {},  # relates doc uri to schemapath
+            "default_xmlns_for_schemapath": {},  # relates schemapath to default_xmlns
         }
 
     return None
@@ -88,7 +89,7 @@ def _apply_incremental_changes(content: str, changes: list) -> str:
     return content
 
 
-def _find_schema_path_by_rootelement(xml_doc, searchpaths):
+def _find_schemapath_by_rootelement(xml_doc, searchpaths):
     """Finds schema file path based on root element name."""
     root_element_name = xml_doc.tag
     for searchpath in searchpaths:
@@ -99,7 +100,7 @@ def _find_schema_path_by_rootelement(xml_doc, searchpaths):
     return None
 
 
-def _find_schema_path_by_location_hint(xml_doc, map_path):
+def _find_schemapath_by_location_hint(xml_doc, map_path):
     """Finds schema file path based on xsi:schemaLocation hint."""
     XSI = "http://www.w3.org/2001/XMLSchema-instance"
     schemaLocation_attr = f"{{{XSI}}}schemaLocation"
@@ -129,6 +130,8 @@ def _find_schema_path_by_location_hint(xml_doc, map_path):
     return None
 
 
+# AI! Modify this method to return both the schema and the schema_path if found,
+# or None, None if not. Also modify the caller to handle this new return value.
 def _get_schema_for_doc(ls, uri, content):
     """Finds and loads the schema for a given document."""
     root_uri = uri.rpartition("/")[0]
@@ -138,17 +141,18 @@ def _get_schema_for_doc(ls, uri, content):
         logging.warning(f"No workspace found for root URI: {root_uri}")
         return None
 
+    parser = ET.XMLParser(recover=True)
     try:
-        xml_doc = ET.fromstring(content.encode("utf-8"))
-    except ET.XMLSyntaxError:
+        xml_doc = ET.fromstring(content.encode("utf-8"), parser)
+    except ET.XMLSyntaxError as e:
+        logging.info(f"could not parse document {e}")
         return None  # Invalid XML, can't determine schema
 
-    root_element_name = xml_doc.tag
-    workspace["roots"][uri] = root_element_name
-
     # Check cache first
-    if root_element_name in workspace["schemas"]:
-        return workspace["schemas"][root_element_name]
+    if uri in workspace["schemapaths_for_uri"]:
+        schema_path = workspace["schemapaths_for_uri"][uri]
+        if schema_path in workspace["schemas_for_xsdpath"]:
+            return workspace["schemas_for_xsdpath"][schema_path]
 
     options = workspace.get("options", {})
     schema_options = options.get("schema", {})
@@ -160,12 +164,13 @@ def _get_schema_for_doc(ls, uri, content):
 
     for locator in locators:
         schema_path = None
+        use_default_namespace = None
         if locator.get("rootelement"):
             logging.info(f"Trying locator rootelement")
-            schema_path = _find_schema_path_by_rootelement(xml_doc, searchpaths)
+            schema_path = _find_schemapath_by_rootelement(xml_doc, searchpaths)
         elif locator.get("location_hint"):
             logging.info(f"Trying locator location_hint")
-            schema_path = _find_schema_path_by_location_hint(
+            schema_path = _find_schemapath_by_location_hint(
                 xml_doc, locator.get("location_hint")
             )
         elif "patterns" in locator:
@@ -181,29 +186,31 @@ def _get_schema_for_doc(ls, uri, content):
                             f"Pattern '{pattern}' matched '{doc_filename}',"
                             f" using schema '{schema_path}'"
                         )
+                        use_default_namespace = p.get("use_default_namespace")
                         break
         else:
             logging.warning(f"Unrecognized locator type {locator}")
 
         if schema_path:
+            if use_default_namespace:
+                logging.info("Will apply default namespace")
+            else:
+                logging.info("Will not apply default namespace")
+
             try:
                 xsd_root = ET.parse(schema_path).getroot()
                 target_namespace = xsd_root.get("targetNamespace")
-
-                if target_namespace:
-                    logging.info(
-                        f"Loading schema {schema_path} with targetNamespace: {target_namespace}"
-                    )
-                    schema = xmlschema.XMLSchema11(
-                        schema_path, default_namespace=target_namespace
-                    )
-                else:
-                    schema = xmlschema.XMLSchema11(schema_path)
-
+                schema = xmlschema.XMLSchema11(schema_path)
                 logging.info(f"Successfully loaded schema {schema_path}")
                 logging.info(f"   Defined elements: {list(schema.elements.keys())}")
                 # Cache it
-                workspace["schemas"][root_element_name] = schema
+                workspace["schemas_for_xsdpath"][schema_path] = schema
+
+                if target_namespace and use_default_namespace:
+                    workspace["default_xmlns_for_schemapath"][schema_path] = (
+                        target_namespace
+                    )
+
                 return schema
             except Exception as e:
                 logging.error(f"Failed to load schema {schema_path}: {e}")
@@ -230,7 +237,7 @@ def _find_element_at_position(element, line):
     return candidate
 
 
-def _validate_document(ls, uri, content, schema):
+def _validate_document(ls, uri, content, schema, default_xmlns):
     """Validate the document against the schema."""
     if not schema:
         logging.info("No schema available, skipping validation.")
@@ -238,8 +245,18 @@ def _validate_document(ls, uri, content, schema):
         return
 
     try:
-        xml_doc = ET.fromstring(content.encode("utf-8"))
-        validation_errors = list(schema.iter_errors(xml_doc))
+        # xml_doc = ET.fromstring(content.encode("utf-8"))
+        # validation_errors = list(schema.iter_errors(xml_doc))
+        # Using XMLResource I can specify a default namespace if desired.
+        if default_xmlns:
+            logging.info(f"applying default namespace {default_xmlns}")
+            xml_resource = xmlschema.XMLResource(content, namespace=default_xmlns)
+        else:
+            logging.info(f"Using normal namespace rules")
+            xml_resource = xmlschema.XMLResource(content)
+
+        validation_errors = list(schema.iter_errors(xml_resource))
+
         if not validation_errors:
             logging.info(f"Validation successful for {uri}: No errors found.")
             ls.publish_diagnostics(uri, [])
@@ -324,7 +341,7 @@ def did_open(ls, params):
     content = params.text_document.text
     session_cache[uri] = {"content": content}
     schema = _get_schema_for_doc(ls, uri, content)
-    _validate_document(ls, uri, content, schema)
+    _validate_document(ls, uri, content, schema, None)
 
 
 @server.feature("textDocument/didChange")
@@ -346,7 +363,7 @@ def did_change(ls, params):
 
     session = session_cache[uri]
 
-    # infer the content
+    # figure the current state of the document
     current_content = session["content"]
     new_content = _apply_incremental_changes(current_content, params.content_changes)
     session["content"] = new_content
@@ -354,32 +371,38 @@ def did_change(ls, params):
     # Schema lookup
     root_uri = uri.rpartition("/")[0]
     schema = None
+    default_namespace = None
     workspace = ls.workspaces.get(root_uri)
     if workspace:
-        root_element_name = workspace["roots"].get(uri)
-        if root_element_name:
-            schema = workspace["schemas"].get(root_element_name)
+        if uri in workspace["schemapaths_for_uri"]:
+            schema_path = workspace["schemapaths_for_uri"][uri]
+            default_namespace = workspace["default_xmlns_for_schemapath"].get(
+                schema_path
+            )
+            schema = workspace["schemas_for_xsdpath"].get(schema_path)
 
     if not schema:
         return None
 
     # Immediate validation
-    _validate_document(ls, uri, new_content, schema)
+    _validate_document(ls, uri, new_content, schema, default_namespace)
 
     # Deferred validation with a timer (debounced)
     if session.get("timer"):
         session["timer"].cancel()
         logging.info(f"Cancelled previous timer for {uri}.")
 
-    def deferred_validation(ls_instance, doc_uri, doc_schema):
+    def deferred_validation(ls_instance, doc_uri, doc_schema, default_xmlns):
         logging.info(f"Running debounced validation for {doc_uri}.")
         if doc_uri in session_cache and "content" in session_cache[doc_uri]:
             content = session_cache[doc_uri]["content"]
-            _validate_document(ls_instance, doc_uri, content, doc_schema)
+            _validate_document(ls_instance, doc_uri, content, doc_schema, default_xmlns)
         else:
             logging.warning(f"No content found for {doc_uri} in deferred validation.")
 
-    timer = threading.Timer(4.0, deferred_validation, args=[ls, uri, schema])
+    timer = threading.Timer(
+        4.0, deferred_validation, args=[ls, uri, schema, default_namespace]
+    )
     session["timer"] = timer
     timer.start()
     logging.info(f"Scheduled deferred validation for {uri}.")
@@ -569,14 +592,11 @@ def completion(ls, params):
         logging.info(f"no workspace")
         return CompletionList(is_incomplete=False, items=[])
 
-    logging.info(f"getting root element name for {uri}")
-    root_element_name = workspace["roots"].get(uri)
-    if not root_element_name:
-        logging.info(f"no root_element_name")
-        return CompletionList(is_incomplete=False, items=[])
+    schema = None
+    if uri in workspace["schemapaths_for_uri"]:
+        schema_path = workspace["schemapaths_for_uri"][uri]
+        schema = workspace["schemas_for_xsdpath"].get(schema_path)
 
-    logging.info(f"getting schema for root element {root_element_name}")
-    schema = workspace["schemas"].get(root_element_name)
     if not schema:
         logging.info(f"no schema")
         return CompletionList(is_incomplete=False, items=[])
