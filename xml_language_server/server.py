@@ -499,9 +499,7 @@ def _get_element_context_at_position(
         # The document is too broken to parse even with recovery.
         return (None, [])
 
-    # AI! Modify this so that if _namespace_for_element() returns the empty string
-    # or None, it falls back to use default_namespace.
-    default_xmlns = _namespace_for_element(root)
+    default_xmlns = _namespace_for_element(root) or default_namespace
 
     # 3. Find the marker element in the resulting tree.
     # marker = root.find(f".//*[local-name()='{marker_tag}']")
