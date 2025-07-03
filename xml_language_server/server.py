@@ -112,8 +112,7 @@ def _find_schema_path_by_location_hint(xml_doc, map_path):
             with open(map_path, "r", encoding="utf-8") as f:
                 schema_map = json.load(f)
 
-            # AI! modify this to set the searchpath variable to
-            # be the containing directory for map_path.
+            searchpath = os.path.dirname(map_path)
 
             for hint in hints:
                 if hint in schema_map:
