@@ -558,6 +558,11 @@ def _get_element_context_at_position(
     # 6. Extract the list of all possible child elements from the schema definition.
     #    The .type.content object is an XsdGroup that contains the content model.
     #    We can iterate over it to get all possible child elements.
+    #
+    # NB: The MSBuild xsd defines the Property type as "abstract" so I guess it
+    # can literally be anything. So completions within a PropertyGroup...
+    # are not helpful.
+
     logging.info(f"found parent element in the schema {parent_xsd_element}")
     valid_children = []
     content_model = parent_xsd_element.type.content
@@ -572,8 +577,8 @@ def _get_element_context_at_position(
     else:
         logging.info(f"content_model has no iter_elements")
 
+    # Some schema uses extensions, we also need to check the base type's content.
     # TODO: make this recurse.
-    # As your schema uses extensions, we also need to check the base type's content.
     base_type = getattr(parent_xsd_element.type, "base_type", None)
     if base_type:
         if hasattr(base_type.content, "iter_elements"):
