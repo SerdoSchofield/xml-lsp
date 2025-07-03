@@ -167,6 +167,20 @@ def _get_schema_for_doc(ls, uri, content):
             schema_path = _find_schema_path_by_location_hint(
                 xml_doc, locator.get("location_hint")
             )
+        # AI! add a third locator option here, based on the presence of the key "patterns".
+        # locator_get("patterns") will be a list like this:
+        #     [
+        #       {
+        #         "pattern": "*.csproj",
+        #         "path": "/path/to/xml-schema/myschema.xsd"
+        #       },
+        #       ...
+        #     ]
+        #
+        # For each pattern, match it against the name of the xml document (the
+        # basename of the uri), using a glob match. If there is a match, set the
+        # schema_path to the value of the path associated to the pattern.
+        #
 
         if schema_path:
             try:
