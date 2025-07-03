@@ -467,7 +467,7 @@ def _namespace_for_element(elt):
 
 
 def _get_element_context_at_position(
-    schema: xmlschema.XMLSchema, xml_content: str, pos: Position
+    schema: xmlschema.XMLSchema, default_namespace: str, xml_content: str, pos: Position
 ):
     """
     Finds the parent element and list of valid child elements at a specific position.
@@ -499,6 +499,8 @@ def _get_element_context_at_position(
         # The document is too broken to parse even with recovery.
         return (None, [])
 
+    # AI! Modify this so that if _namespace_for_element() returns the empty string
+    # or None, it falls back to use default_namespace.
     default_xmlns = _namespace_for_element(root)
 
     # 3. Find the marker element in the resulting tree.
@@ -518,25 +520,35 @@ def _get_element_context_at_position(
         return (None, [])  # Marker is at the root, no parent.
 
     # 5. Find the schema definition for the parent element.
-    def _get_child_by_name_recurse(schema_elt, childtag):
-        if schema_elt.tag == childtag:
+    def _get_child_by_name_recurse(schema_elt, childtag, visited=None):
+        if _local_name_for_element(schema_elt) == childtag:
             return schema_elt
+
+        if visited is None:
+            visited = set()
 
         foundchild = None
         if hasattr(schema_elt.type, "content"):
             if hasattr(schema_elt.type.content, "iter_elements"):
                 for x in schema_elt.type.content.iter_elements():
-                    if not foundchild:
-                        if x.name == childtag:
-                            foundchild = x
-                        else:
-                            foundchild = _get_child_by_name_recurse(x, childtag)
+                    if x not in visited:
+                        if not foundchild:
+                            logging.info(
+                                f"checking x.name({x.name}) vs child({childtag})"
+                            )
+                            if _local_name_for_element(x) == childtag:
+                                foundchild = x
+                            else:
+                                visited.add(x)
+                                foundchild = _get_child_by_name_recurse(
+                                    x, childtag, visited
+                                )
         return foundchild
 
     try:
         logging.info(f"looking for parent element {parent.tag}")
         parent_xsd_element = _get_child_by_name_recurse(
-            schema.root_elements[0], parent.tag
+            schema.root_elements[0], _local_name_for_element(parent)
         )
         if parent_xsd_element is None:
             logging.info(f"no parent element found in the schema")
@@ -605,9 +617,11 @@ def completion(ls, params):
         return CompletionList(is_incomplete=False, items=[])
 
     schema = None
+    default_namespace = None
     if uri in workspace["schemapaths_for_uri"]:
         schema_path = workspace["schemapaths_for_uri"][uri]
         schema = workspace["schemas_for_xsdpath"].get(schema_path)
+        default_namespace = workspace["default_xmlns_for_schemapath"].get(schema_path)
 
     if not schema:
         logging.info(f"no schema")
@@ -616,7 +630,9 @@ def completion(ls, params):
     logging.info(f"got schema {schema}")
     logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
 
-    parent_element, completions = _get_element_context_at_position(schema, content, pos)
+    parent_element, completions = _get_element_context_at_position(
+        schema, default_namespace, content, pos
+    )
     logging.info(f"Found {len(completions)} completions: {completions}")
 
     items = [
