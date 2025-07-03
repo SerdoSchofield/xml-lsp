@@ -445,7 +445,25 @@ def did_save(ls, params):
 def did_close(ls, params):
     """Document closed."""
     uri = params.text_document.uri
-    logging.info(f"didClose: {uri} (no-op)")
+    logging.info(f"didClose: {uri}")
+
+    root_uri = uri.rpartition("/")[0]
+    workspace = ls.workspaces.get(root_uri)
+
+    if workspace:
+        logging.warning(f"workspace found for root URI: {root_uri}")
+        if uri in workspace["schemapaths_for_uri"]:
+            schema_path = workspace["schemapaths_for_uri"][uri]
+            # AI! here, remove the entry, workspace["schemapaths_for_uri"][uri],
+            # and also, check if there are any other keys in the
+            # workspace["schemapaths_for_uri"] dict pointing to the same
+            # schema_path value. If there are none, then
+            # remove the entry
+            # workspace["schemas_for_xsdpath"][schema_path]
+
+    else:
+        logging.warning(f"No workspace found for root URI: {root_uri}")
+
     pass
 
 
