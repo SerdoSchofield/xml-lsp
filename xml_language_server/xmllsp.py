@@ -45,6 +45,119 @@ server.workspaces = {}
 session_cache = TTLCache(maxsize=128, ttl=180)
 
 
+class Workspace:
+    """Represents a single workspace folder."""
+
+    def __init__(self, root_uri, initialization_options):
+        self.root_uri = root_uri
+        self.options = initialization_options
+        self.schemas_for_xsdpath = {}  # schemapath -> schema object
+        self.schemapaths_for_uri = {}  # doc uri -> schemapath
+        self.default_xmlns_for_schemapath = {}  # schemapath -> default_xmlns
+
+    def get_schema_for_doc(self, uri, content):
+        """
+        Finds, loads, and caches the schema for a given document.
+
+        Updates the workspace state with the results of the schema search.
+
+        Returns:
+            A tuple of (xmlschema.XMLSchema, str) or (None, None).
+        """
+        parser = ET.XMLParser(recover=True)
+        try:
+            xml_doc = ET.fromstring(content.encode("utf-8"), parser)
+        except ET.XMLSyntaxError as e:
+            logging.info(f"could not parse document {e}")
+            return None, None  # Invalid XML, can't determine schema
+
+        # Check cache first
+        if uri in self.schemapaths_for_uri:
+            schema_path = self.schemapaths_for_uri[uri]
+            if schema_path in self.schemas_for_xsdpath:
+                schema = self.schemas_for_xsdpath[schema_path]
+                return schema, schema_path
+
+        locators = self.options.get("schemaLocators", [])
+        if not locators:
+            logging.warning("No schema locators specified.")
+
+        for locator in locators:
+            schema_path = None
+            use_default_namespace = None
+            if locator.get("rootElement") and locator.get("searchPaths"):
+                logging.info("Trying locator rootElement")
+                schema_path = _find_schemapath_by_rootelement(
+                    xml_doc, locator.get("searchPaths")
+                )
+            elif locator.get("locationHint"):
+                logging.info("Trying locator locationHint")
+                schema_path = _find_schemapath_by_location_hint(
+                    xml_doc, locator.get("locationHint")
+                )
+            elif "patterns" in locator:
+                logging.info("Trying locator patterns")
+                patterns = locator.get("patterns", [])
+                doc_filename = os.path.basename(to_fs_path(uri))
+                for p in patterns:
+                    pattern = p.get("pattern")
+                    if pattern and fnmatch.fnmatch(doc_filename, pattern):
+                        schema_path = p.get("path")
+                        if schema_path:
+                            logging.info(
+                                f"Pattern '{pattern}' matched '{doc_filename}',"
+                                f" using schema '{schema_path}'"
+                            )
+                            use_default_namespace = p.get("useDefaultNamespace")
+                            break
+            else:
+                logging.warning(f"Unrecognized locator type {locator}")
+
+            if schema_path:
+                try:
+                    xsd_root = ET.parse(schema_path).getroot()
+                    target_namespace = xsd_root.get("targetNamespace")
+                    schema = xmlschema.XMLSchema11(schema_path)
+                    logging.info(f"Successfully loaded schema {schema_path}")
+
+                    # Stash it
+                    self.schemas_for_xsdpath[schema_path] = schema
+                    self.schemapaths_for_uri[uri] = schema_path
+
+                    if target_namespace and use_default_namespace:
+                        self.default_xmlns_for_schemapath[schema_path] = (
+                            target_namespace
+                        )
+
+                    return schema, schema_path
+                except Exception as e:
+                    logging.error(f"Failed to load schema {schema_path}: {e}")
+                    return None, None
+
+        logging.warning(f"No schema located for {uri}")
+        return None, None
+
+    def release_document(self, uri):
+        """Releases a document and cleans up unused schemas from the cache."""
+        logging.info(f"Releasing document: {uri}")
+        if uri in self.schemapaths_for_uri:
+            schema_path = self.schemapaths_for_uri.pop(uri)
+            logging.info(
+                f"Document {uri} closed; schemapath {schema_path} no longer used by it."
+            )
+
+            # Check if any other open documents use this schema
+            if schema_path not in self.schemapaths_for_uri.values():
+                logging.info(
+                    f"Schema {schema_path} is no longer used by any open document."
+                )
+                if schema_path in self.schemas_for_xsdpath:
+                    self.schemas_for_xsdpath.pop(schema_path)
+                    logging.info(f"Removed schema {schema_path} from cache.")
+                if schema_path in self.default_xmlns_for_schemapath:
+                    self.default_xmlns_for_schemapath.pop(schema_path, None)
+
+
 @server.feature("initialize")
 def initialize(ls, params):
     """Server is initialized."""
@@ -55,12 +168,7 @@ def initialize(ls, params):
 
     if root_uri:
         logging.info(f"Workspace root: {root_uri}")
-        ls.workspaces[root_uri] = {
-            "options": initialization_options,
-            "schemas_for_xsdpath": {},  # relates schemapath to schema
-            "schemapaths_for_uri": {},  # relates doc uri to schemapath
-            "default_xmlns_for_schemapath": {},  # relates schemapath to default_xmlns
-        }
+        ls.workspaces[root_uri] = Workspace(root_uri, initialization_options)
 
     return None
 
@@ -147,99 +255,6 @@ def _find_schemapath_by_location_hint(xml_doc, map_path):
     return None
 
 
-def _get_schema_for_doc(ls, uri, content):
-    """
-    Finds and loads the schema for a given document.
-
-    Returns:
-        A tuple of (xmlschema.XMLSchema, str) or (None, None).
-    """
-    root_uri = uri.rpartition("/")[0]
-    workspace = ls.workspaces.get(root_uri)
-
-    if not workspace:
-        logging.warning(f"No workspace found for root URI: {root_uri}")
-        return None, None
-
-    parser = ET.XMLParser(recover=True)
-    try:
-        xml_doc = ET.fromstring(content.encode("utf-8"), parser)
-    except ET.XMLSyntaxError as e:
-        logging.info(f"could not parse document {e}")
-        return None, None  # Invalid XML, can't determine schema
-
-    # Check cache first
-    if uri in workspace["schemapaths_for_uri"]:
-        schema_path = workspace["schemapaths_for_uri"][uri]
-        if schema_path in workspace["schemas_for_xsdpath"]:
-            schema = workspace["schemas_for_xsdpath"][schema_path]
-            return schema, schema_path
-
-    options = workspace.get("options", {})
-    locators = options.get("schemaLocators", [])
-
-    if not locators:
-        logging.warning("No schema locators specified.")
-
-    for locator in locators:
-        schema_path = None
-        use_default_namespace = None
-        if locator.get("rootElement") and locator.get("searchPaths"):
-            logging.info(f"Trying locator rootElement")
-            schema_path = _find_schemapath_by_rootelement(
-                xml_doc, locator.get("searchPaths")
-            )
-        elif locator.get("locationHint"):
-            logging.info(f"Trying locator locationHint")
-            schema_path = _find_schemapath_by_location_hint(
-                xml_doc, locator.get("locationHint")
-            )
-        elif "patterns" in locator:
-            logging.info("Trying locator patterns")
-            patterns = locator.get("patterns", [])
-            doc_filename = os.path.basename(to_fs_path(uri))
-            for p in patterns:
-                pattern = p.get("pattern")
-                if pattern and fnmatch.fnmatch(doc_filename, pattern):
-                    schema_path = p.get("path")
-                    if schema_path:
-                        logging.info(
-                            f"Pattern '{pattern}' matched '{doc_filename}',"
-                            f" using schema '{schema_path}'"
-                        )
-                        use_default_namespace = p.get("useDefaultNamespace")
-                        break
-        else:
-            logging.warning(f"Unrecognized locator type {locator}")
-
-        if schema_path:
-            if use_default_namespace:
-                logging.info("Will apply default namespace")
-            else:
-                logging.info("Will not apply default namespace")
-
-            try:
-                xsd_root = ET.parse(schema_path).getroot()
-                target_namespace = xsd_root.get("targetNamespace")
-                schema = xmlschema.XMLSchema11(schema_path)
-                logging.info(f"Successfully loaded schema {schema_path}")
-                logging.info(f"Defined elements: {list(schema.elements.keys())}")
-                # Stash it
-                workspace["schemas_for_xsdpath"][schema_path] = schema
-
-                if target_namespace and use_default_namespace:
-                    workspace["default_xmlns_for_schemapath"][schema_path] = (
-                        target_namespace
-                    )
-
-                return schema, schema_path
-            except Exception as e:
-                logging.error(f"Failed to load schema {schema_path}: {e}")
-                # Don't try other locators if we found a file but it failed to load
-                return None, None
-
-    logging.warning(f"No schema located for {uri}")
-    return None, None
 
 
 def _find_element_at_position(element, line):
@@ -361,13 +376,17 @@ def did_open(ls, params):
     content = params.text_document.text
     session_cache[uri] = {"content": content}
 
-    schema, schema_path = _get_schema_for_doc(ls, uri, content)
     root_uri = uri.rpartition("/")[0]
     workspace = ls.workspaces.get(root_uri)
+    if not workspace:
+        logging.warning(f"No workspace for {uri}")
+        return
+
+    schema, schema_path = workspace.get_schema_for_doc(uri, content)
+
     default_namespace = None
-    if workspace and schema_path:
-        workspace["schemapaths_for_uri"][uri] = schema_path
-        default_namespace = workspace["default_xmlns_for_schemapath"].get(schema_path)
+    if schema_path:
+        default_namespace = workspace.default_xmlns_for_schemapath.get(schema_path)
 
     _validate_document(ls, uri, content, schema, default_namespace)
 
@@ -401,13 +420,10 @@ def did_change(ls, params):
     schema = None
     default_namespace = None
     workspace = ls.workspaces.get(root_uri)
-    if workspace:
-        if uri in workspace["schemapaths_for_uri"]:
-            schema_path = workspace["schemapaths_for_uri"][uri]
-            default_namespace = workspace["default_xmlns_for_schemapath"].get(
-                schema_path
-            )
-            schema = workspace["schemas_for_xsdpath"].get(schema_path)
+    if workspace and uri in workspace.schemapaths_for_uri:
+        schema_path = workspace.schemapaths_for_uri[uri]
+        schema = workspace.schemas_for_xsdpath.get(schema_path)
+        default_namespace = workspace.default_xmlns_for_schemapath.get(schema_path)
 
     if not schema:
         return None
@@ -460,23 +476,7 @@ def did_close(ls, params):
     workspace = ls.workspaces.get(root_uri)
 
     if workspace:
-        logging.info(f"workspace found for root URI: {root_uri}")
-        if uri in workspace["schemapaths_for_uri"]:
-            schema_path = workspace["schemapaths_for_uri"].pop(uri)
-            logging.info(
-                f"Document {uri} closed; schemapath {schema_path} no longer used by it."
-            )
-
-            # Check if any other open documents use this schema
-            if schema_path not in workspace["schemapaths_for_uri"].values():
-                logging.info(
-                    f"Schema {schema_path} is no longer used by any open document."
-                )
-                if schema_path in workspace["schemas_for_xsdpath"]:
-                    workspace["schemas_for_xsdpath"].pop(schema_path)
-                    logging.info(f"Removed schema {schema_path} from cache.")
-                if schema_path in workspace["default_xmlns_for_schemapath"]:
-                    workspace["default_xmlns_for_schemapath"].pop(schema_path, None)
+        workspace.release_document(uri)
     else:
         logging.warning(f"No workspace found for root URI: {root_uri}")
 
