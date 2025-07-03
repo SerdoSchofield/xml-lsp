@@ -87,9 +87,49 @@ def _apply_incremental_changes(content: str, changes: list) -> str:
     return content
 
 
+def _find_schema_path_by_rootelement(xml_doc, searchpaths):
+    """Finds schema file path based on root element name."""
+    root_element_name = xml_doc.tag
+    for searchpath in searchpaths:
+        schema_path = os.path.join(searchpath, f"{root_element_name}.xsd")
+        if os.path.exists(schema_path):
+            logging.info(f"Found schema for {root_element_name} at {schema_path}")
+            return schema_path
+    return None
+
+
+def _find_schema_path_by_location_hint(xml_doc, searchpaths):
+    """Finds schema file path based on xsi:schemaLocation hint."""
+    XSI = "http://www.w3.org/2001/XMLSchema-instance"
+    schemaLocation_attr = f"{{{XSI}}}schemaLocation"
+    attr_value = xml_doc.attrib.get(schemaLocation_attr)
+    if not attr_value:
+        return None
+
+    hints = attr_value.split()
+    for searchpath in searchpaths:
+        map_path = os.path.join(searchpath, "schema_map.json")
+        if os.path.exists(map_path):
+            try:
+                with open(map_path, "r", encoding="utf-8") as f:
+                    schema_map = json.load(f)
+
+                for hint in hints:
+                    if hint in schema_map:
+                        schema_filename = schema_map[hint]
+                        schema_path = os.path.join(searchpath, schema_filename)
+                        if os.path.exists(schema_path):
+                            logging.info(
+                                f"Found schema hint '{hint}' pointing to {schema_path}"
+                            )
+                            return schema_path
+            except Exception as e:
+                logging.error(f"Error processing schema_map.json at {map_path}: {e}")
+    return None
+
+
 def _get_schema_for_doc(ls, uri, content):
     """Finds and loads the schema for a given document."""
-    # "trim the final element of the path"
     root_uri = uri.rpartition("/")[0]
     workspace = ls.workspaces.get(root_uri)
 
@@ -97,65 +137,41 @@ def _get_schema_for_doc(ls, uri, content):
         logging.warning(f"No workspace found for root URI: {root_uri}")
         return None
 
-    options = workspace.get("options", {})
-    schema_options = options.get("schema", {})
-    locators = schema_options.get("locators", [])
-
-    # AI! Modify this logic to do several things:
-    #
-    # 1. extract the schema finding logic for the "rootelement" locator, into
-    #    a separate function.
-    #
-    # 2. accept a second locator type, "location_hint". If this is present, then
-    #    look for an attribute xsi:schemaLocation on the root element of the document,
-    #    where the xsi prefix is xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance".
-    #    If that attr exists, split the string value by spaces, and then attempt to
-    #    find a schema file in this way:
-    #       - look in each of the schema_options.get("searchpaths", []), for a file called
-    #         "schema_map.json". If found, deserialize that json file, and look for a key
-    #         equal to any of the string values in the xsi:schemaLocation attribute. If found,
-    #         the value for that key, shall be the name of a file, local to that searchpath
-    #         directory.  Load the schema from that file, if it exists.
-    #         Example: if schema_map.json contains { "foobar": "myschema.xsd", "wham": "file2.xsd"}
-    #         and the root element has xsi:schemaLocation="whammy foobar", then the
-    #         logic should load "myschema.xsd".
-    #
-    # Try each locator in the order of appearance in the settings, until a schema is
-    # located.
-
-    use_rootelement_locator = any(m.get("rootelement") for m in locators)
-    if not use_rootelement_locator:
-        return None
-
     try:
-        # Use lxml to parse and get the root element name
         xml_doc = ET.fromstring(content.encode("utf-8"))
-        root_element_name = xml_doc.tag
     except ET.XMLSyntaxError:
-        # Invalid XML, can't determine root element
-        return None
+        return None  # Invalid XML, can't determine schema
 
+    root_element_name = xml_doc.tag
     workspace["roots"][uri] = root_element_name
 
     # Check cache first
     if root_element_name in workspace["schemas"]:
         return workspace["schemas"][root_element_name]
 
-    # Not in cache, search for it
+    options = workspace.get("options", {})
+    schema_options = options.get("schema", {})
+    locators = schema_options.get("locators", [])
     searchpaths = schema_options.get("searchpaths", [])
-    for searchpath in searchpaths:
-        schema_path = os.path.join(searchpath, f"{root_element_name}.xsd")
-        if os.path.exists(schema_path):
-            logging.info(f"Found schema doc for {root_element_name} at {schema_path}")
+
+    for locator in locators:
+        schema_path = None
+        if locator.get("rootelement"):
+            schema_path = _find_schema_path_by_rootelement(xml_doc, searchpaths)
+        elif locator.get("location_hint"):
+            schema_path = _find_schema_path_by_location_hint(xml_doc, searchpaths)
+
+        if schema_path:
             try:
                 schema = xmlschema.XMLSchema11(schema_path)
+                logging.info(f"Successfully loaded schema {schema_path}")
                 logging.info(f"   Defined elements: {list(schema.elements.keys())}")
                 # Cache it
                 workspace["schemas"][root_element_name] = schema
                 return schema
             except Exception as e:
                 logging.error(f"Failed to load schema {schema_path}: {e}")
-                # Don't try other paths if we found one but it failed to load
+                # Don't try other locators if we found a file but it failed to load
                 return None
 
     logging.warning(f"No schema found for root element {root_element_name}")
