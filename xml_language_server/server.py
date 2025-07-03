@@ -368,6 +368,20 @@ def did_save(ls, params):
         logging.error(f"Could not read file on save for {uri}: {e}")
 
 
+def _local_name_for_element(elt):
+    """Returns the local name of an lxml element, ignoring the namespace."""
+    if "}" in elt.tag:
+        return elt.tag.split("}", 1)[1]
+    return elt.tag
+
+
+def _namespace_for_element(elt):
+    """Returns the namespace of an lxml element."""
+    if "}" in elt.tag:
+        return elt.tag.split("}", 1)[0][1:]
+    return ""
+
+
 def _get_element_context_at_position(
     schema: xmlschema.XMLSchema, xml_content: str, pos: Position
 ):
@@ -401,27 +415,7 @@ def _get_element_context_at_position(
         # The document is too broken to parse even with recovery.
         return (None, [])
 
-    # AI! introduce some logic here to discern the default XML namespace for this
-    # document, by examining the toplevel element in the parsed root,
-    # retrieving the root.tag, and then extracting the namespace from it.
-    #
-    # In support of this, produce 2 new methods in this file:
-    #   - _local_name_for_element(elt)
-    #   - _namespace_for_element(elt)
-    #
-    # Both should examine the elt.tag, which will follow one of two patterns:
-    #  - namespace-qualified. The form is like "{namespace-here}elementNameHere"
-    #  - unqualified. the form is "elementNameHere"
-    #
-    # The _local_name_for_element(elt) should return what follows the closing curly-brace
-    # in the namespace-qualified case, or just the tag if there is no curly brace.
-    #
-    # The _namespace_for_element(elt) should return what is enclosed in the curly-braces
-    # in the namespace-qualified case, or just the empty string "" if there is no curly brace.
-    #
-    # Use the following to set the default namespace. We will use it later in a subsequent change.
-    #
-    #  default_xmlns = _namespace_for_element(root)
+    default_xmlns = _namespace_for_element(root)
 
     # 3. Find the marker element in the resulting tree.
     # marker = root.find(f".//*[local-name()='{marker_tag}']")
