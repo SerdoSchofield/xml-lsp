@@ -370,15 +370,33 @@ def did_save(ls, params):
 
 def _local_name_for_element(elt):
     """Returns the local name of an lxml element, ignoring the namespace."""
-    if "}" in elt.tag:
-        return elt.tag.split("}", 1)[1]
-    return elt.tag
+    name = None
+    if hasattr(elt, "tag"):  # for lxml.etree.Element
+        name = elt.tag
+    elif hasattr(elt, "name"):  # for xmlschema
+        name = elt.name
+
+    if name:
+        if "}" in name:
+            return name.split("}", 1)[1]
+
+    return name
 
 
 def _namespace_for_element(elt):
     """Returns the namespace of an lxml element."""
-    if "}" in elt.tag:
-        return elt.tag.split("}", 1)[0][1:]
+    name = None
+    if hasattr(elt, "tag"):  # for lxml.etree.Element
+        name = elt.tag
+    elif hasattr(elt, "name"):  # for xmlschema
+        name = elt.name
+
+    if not name:
+        return None
+
+    if "}" in name:
+        return name.split("}", 1)[0][1:]
+
     return ""
 
 
@@ -481,7 +499,11 @@ def _get_element_context_at_position(
     if base_type:
         if hasattr(base_type.content, "iter_elements"):
             for element_node in base_type.content.iter_elements():
-                valid_children.append(element_node.name)
+                elt_xmlns = _namespace_for_element(element_node)
+                if elt_xmlns == default_xmlns:
+                    valid_children.append(_local_name_for_element(element_node))
+                else:
+                    valid_children.append(element_node.name)
         else:
             logging.info(f"base_type content has no iter_elements")
     else:
