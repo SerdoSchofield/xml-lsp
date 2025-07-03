@@ -154,11 +154,15 @@ def _get_schema_for_doc(ls, uri, content):
     locators = schema_options.get("locators", [])
     searchpaths = schema_options.get("searchpaths", [])
 
+    # AI! Add a check here. If there are no locators, then do
+    #   logging.warning(f"No schema locators specified.")
     for locator in locators:
         schema_path = None
         if locator.get("rootelement"):
+            logging.info(f"Trying locator rootelement")
             schema_path = _find_schema_path_by_rootelement(xml_doc, searchpaths)
         elif locator.get("location_hint"):
+            logging.info(f"Trying locator location_hint")
             schema_path = _find_schema_path_by_location_hint(xml_doc, searchpaths)
 
         if schema_path:
@@ -174,7 +178,7 @@ def _get_schema_for_doc(ls, uri, content):
                 # Don't try other locators if we found a file but it failed to load
                 return None
 
-    logging.warning(f"No schema found for root element {root_element_name}")
+    logging.warning(f"No schema located for {uri}")
     return None
 
 
