@@ -98,7 +98,7 @@ def _find_schema_path_by_rootelement(xml_doc, searchpaths):
     return None
 
 
-def _find_schema_path_by_location_hint(xml_doc, searchpaths):
+def _find_schema_path_by_location_hint(xml_doc, map_path):
     """Finds schema file path based on xsi:schemaLocation hint."""
     XSI = "http://www.w3.org/2001/XMLSchema-instance"
     schemaLocation_attr = f"{{{XSI}}}schemaLocation"
@@ -107,24 +107,25 @@ def _find_schema_path_by_location_hint(xml_doc, searchpaths):
         return None
 
     hints = attr_value.split()
-    for searchpath in searchpaths:
-        map_path = os.path.join(searchpath, "schema_map.json")
-        if os.path.exists(map_path):
-            try:
-                with open(map_path, "r", encoding="utf-8") as f:
-                    schema_map = json.load(f)
+    if os.path.exists(map_path):
+        try:
+            with open(map_path, "r", encoding="utf-8") as f:
+                schema_map = json.load(f)
 
-                for hint in hints:
-                    if hint in schema_map:
-                        schema_filename = schema_map[hint]
-                        schema_path = os.path.join(searchpath, schema_filename)
-                        if os.path.exists(schema_path):
-                            logging.info(
-                                f"Found schema hint '{hint}' pointing to {schema_path}"
-                            )
-                            return schema_path
-            except Exception as e:
-                logging.error(f"Error processing schema_map.json at {map_path}: {e}")
+            # AI! modify this to set the searchpath variable to
+            # be the containing directory for map_path.
+
+            for hint in hints:
+                if hint in schema_map:
+                    schema_filename = schema_map[hint]
+                    schema_path = os.path.join(searchpath, schema_filename)
+                    if os.path.exists(schema_path):
+                        logging.info(
+                            f"Found schema hint '{hint}' pointing to {schema_path}"
+                        )
+                        return schema_path
+        except Exception as e:
+            logging.error(f"Error processing schema_map.json at {map_path}: {e}")
     return None
 
 
@@ -164,7 +165,9 @@ def _get_schema_for_doc(ls, uri, content):
             schema_path = _find_schema_path_by_rootelement(xml_doc, searchpaths)
         elif locator.get("location_hint"):
             logging.info(f"Trying locator location_hint")
-            schema_path = _find_schema_path_by_location_hint(xml_doc, searchpaths)
+            schema_path = _find_schema_path_by_location_hint(
+                xml_doc, locator.get("location_hint")
+            )
 
         if schema_path:
             try:
@@ -488,8 +491,11 @@ def _get_element_context_at_position(
 
     if hasattr(content_model, "iter_elements"):
         for element_node in content_model.iter_elements():
-            # The 'name' of each element node is the valid tag.
-            valid_children.append(element_node.name)
+            elt_xmlns = _namespace_for_element(element_node)
+            if elt_xmlns == default_xmlns:
+                valid_children.append(_local_name_for_element(element_node))
+            else:
+                valid_children.append(element_node.name)
     else:
         logging.info(f"content_model has no iter_elements")
 
@@ -561,11 +567,12 @@ def completion(ls, params):
     ]
 
     if parent_element is not None:
+        local_name = _local_name_for_element(parent_element)
         items.append(
             CompletionItem(
-                label=f"close {parent_element.tag}",
+                label=f"close {local_name}",
                 kind=CompletionItemKind.Struct,
-                insert_text=f"</{parent_element.tag}>",
+                insert_text=f"</{local_name}>",
             )
         )
 
