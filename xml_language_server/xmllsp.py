@@ -13,13 +13,13 @@
 # limitations under the License.
 #
 
+import argparse
 import fnmatch
 import json
 import logging
 import os
 import re
 import threading
-import argparse
 
 import lxml.etree as ET
 import xmlschema
@@ -35,7 +35,6 @@ from lsprotocol.types import (
 )
 from pygls.server import LanguageServer
 from pygls.uris import to_fs_path
-
 
 server = LanguageServer("xml-language-server", "v0.2")
 server.workspaces = {}
@@ -224,8 +223,8 @@ def _get_schema_for_doc(ls, uri, content):
                 target_namespace = xsd_root.get("targetNamespace")
                 schema = xmlschema.XMLSchema11(schema_path)
                 logging.info(f"Successfully loaded schema {schema_path}")
-                logging.info(f"   Defined elements: {list(schema.elements.keys())}")
-                # Cache it
+                logging.info(f"Defined elements: {list(schema.elements.keys())}")
+                # Stash it
                 workspace["schemas_for_xsdpath"][schema_path] = schema
 
                 if target_namespace and use_default_namespace:
@@ -416,13 +415,13 @@ def did_change(ls, params):
     # Immediate validation
     _validate_document(ls, uri, new_content, schema, default_namespace)
 
-    # Deferred validation with a timer (debounced)
+    # As well as deferred validation with a timer, debounced
     if session.get("timer"):
         session["timer"].cancel()
         logging.info(f"Cancelled previous timer for {uri}.")
 
     def deferred_validation(ls_instance, doc_uri, doc_schema, default_xmlns):
-        logging.info(f"Running debounced validation for {doc_uri}.")
+        logging.info(f"Running deferred validation for {doc_uri}.")
         if doc_uri in session_cache and "content" in session_cache[doc_uri]:
             content = session_cache[doc_uri]["content"]
             _validate_document(ls_instance, doc_uri, content, doc_schema, default_xmlns)
@@ -642,9 +641,7 @@ def _get_element_context_at_position(
     # are not helpful.
 
     logging.info(f"found parent element in the schema {parent_xsd_element}")
-    valid_children = _get_elements_from_type(
-        parent_xsd_element.type, default_xmlns
-    )
+    valid_children = _get_elements_from_type(parent_xsd_element.type, default_xmlns)
 
     # For a more advanced implementation, you would filter out elements that
     # already exist if they cannot appear more than once.
@@ -713,12 +710,14 @@ def completion(ls, params):
 
 def main():
     """The main entry point for the server."""
+    default_log_file_location = "/tmp/xmllsp.log"
+    default_log_level = "INFO"
     parser = argparse.ArgumentParser(description="XML Language Server")
     parser.add_argument(
         "--log-file",
         type=str,
         metavar="FILE",
-        help="Path to the log file. If not provided, logging is disabled unless --log-level is set.",
+        help=f"Path to the log file. If you specify --log-file without --log-level, the level defaults to {default_log_level}.",
     )
     parser.add_argument(
         "--log-level",
@@ -726,8 +725,8 @@ def main():
         default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help=(
-            "Set the logging level. Enables logging to /tmp/xmllsp.log if "
-            "--log-file is not specified. (default: INFO)"
+            f"Set the logging level. Uses {default_log_file_location} if "
+            "--log-file is not specified."
         ),
     )
     args = parser.parse_args()
@@ -738,12 +737,14 @@ def main():
     # Enable logging if either a file or a level is specified by the user.
     if log_file or log_level_str:
         if not log_file:
-            log_file = "/tmp/xmllsp.log"
+            log_file = default_log_file_location
         if not log_level_str:
-            log_level_str = "INFO"
+            log_level_str = default_log_level
 
         log_level = getattr(logging, log_level_str.upper(), logging.INFO)
         logging.basicConfig(filename=log_file, level=log_level, filemode="w")
+        # Set the logging level for pygls to avoid overly verbose output.
+        logging.getLogger("pygls").setLevel(log_level)
 
     logging.info("Starting XML language server.")
     server.start_io()
