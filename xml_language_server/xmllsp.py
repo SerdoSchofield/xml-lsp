@@ -255,8 +255,6 @@ def _find_schemapath_by_location_hint(xml_doc, map_path):
     return None
 
 
-
-
 def _find_element_at_position(element, line):
     """Recursively find the deepest element at a given line number (1-based)."""
     candidate = None
@@ -666,15 +664,10 @@ def completion(ls, params):
     logging.info(f"getting workspace for {root_uri}")
     workspace = ls.workspaces.get(root_uri)
     if not workspace:
-        logging.info(f"no workspace")
+        logging.info(f"no workspace for {uri}")
         return CompletionList(is_incomplete=False, items=[])
 
-    schema = None
-    default_namespace = None
-    if uri in workspace["schemapaths_for_uri"]:
-        schema_path = workspace["schemapaths_for_uri"][uri]
-        schema = workspace["schemas_for_xsdpath"].get(schema_path)
-        default_namespace = workspace["default_xmlns_for_schemapath"].get(schema_path)
+    schema, schema_path = workspace.get_schema_for_doc(uri, content)
 
     if not schema:
         logging.info(f"no schema")
@@ -682,6 +675,10 @@ def completion(ls, params):
 
     logging.info(f"got schema {schema}")
     logging.info(f"schema-defined elements: {list(schema.elements.keys())}")
+
+    default_namespace = None
+    if schema_path:
+        default_namespace = workspace.default_xmlns_for_schemapath.get(schema_path)
 
     parent_element, completions = _get_element_context_at_position(
         schema, default_namespace, content, pos
