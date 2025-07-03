@@ -718,20 +718,32 @@ def main():
         "--log-file",
         type=str,
         metavar="FILE",
-        help="Path to the log file. If not provided, logging is disabled.",
+        help="Path to the log file. If not provided, logging is disabled unless --log-level is set.",
     )
     parser.add_argument(
         "--log-level",
         type=str,
-        default="INFO",
+        default=None,
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
-        help="Set the logging level (default: INFO).",
+        help=(
+            "Set the logging level. Enables logging to /tmp/xmllsp.log if "
+            "--log-file is not specified. (default: INFO)"
+        ),
     )
     args = parser.parse_args()
 
-    if args.log_file:
-        log_level = getattr(logging, args.log_level.upper(), logging.INFO)
-        logging.basicConfig(filename=args.log_file, level=log_level, filemode="w")
+    log_file = args.log_file
+    log_level_str = args.log_level
+
+    # Enable logging if either a file or a level is specified by the user.
+    if log_file or log_level_str:
+        if not log_file:
+            log_file = "/tmp/xmllsp.log"
+        if not log_level_str:
+            log_level_str = "INFO"
+
+        log_level = getattr(logging, log_level_str.upper(), logging.INFO)
+        logging.basicConfig(filename=log_file, level=log_level, filemode="w")
 
     logging.info("Starting XML language server.")
     server.start_io()
