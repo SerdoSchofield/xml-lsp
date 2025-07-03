@@ -441,6 +441,14 @@ def did_save(ls, params):
         logging.error(f"Could not read file on save for {uri}: {e}")
 
 
+@server.feature("textDocument/didClose")
+def did_close(ls, params):
+    """Document closed."""
+    uri = params.text_document.uri
+    logging.info(f"didClose: {uri} (no-op)")
+    pass
+
+
 def _local_name_for_element(elt):
     """Returns the local name of an lxml element, ignoring the namespace."""
     name = None
