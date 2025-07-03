@@ -130,29 +130,33 @@ def _find_schemapath_by_location_hint(xml_doc, map_path):
     return None
 
 
-# AI! Modify this method to return both the schema and the schema_path if found,
-# or None, None if not. Also modify the caller to handle this new return value.
 def _get_schema_for_doc(ls, uri, content):
-    """Finds and loads the schema for a given document."""
+    """
+    Finds and loads the schema for a given document.
+
+    Returns:
+        A tuple of (xmlschema.XMLSchema, str) or (None, None).
+    """
     root_uri = uri.rpartition("/")[0]
     workspace = ls.workspaces.get(root_uri)
 
     if not workspace:
         logging.warning(f"No workspace found for root URI: {root_uri}")
-        return None
+        return None, None
 
     parser = ET.XMLParser(recover=True)
     try:
         xml_doc = ET.fromstring(content.encode("utf-8"), parser)
     except ET.XMLSyntaxError as e:
         logging.info(f"could not parse document {e}")
-        return None  # Invalid XML, can't determine schema
+        return None, None  # Invalid XML, can't determine schema
 
     # Check cache first
     if uri in workspace["schemapaths_for_uri"]:
         schema_path = workspace["schemapaths_for_uri"][uri]
         if schema_path in workspace["schemas_for_xsdpath"]:
-            return workspace["schemas_for_xsdpath"][schema_path]
+            schema = workspace["schemas_for_xsdpath"][schema_path]
+            return schema, schema_path
 
     options = workspace.get("options", {})
     schema_options = options.get("schema", {})
@@ -211,14 +215,14 @@ def _get_schema_for_doc(ls, uri, content):
                         target_namespace
                     )
 
-                return schema
+                return schema, schema_path
             except Exception as e:
                 logging.error(f"Failed to load schema {schema_path}: {e}")
                 # Don't try other locators if we found a file but it failed to load
-                return None
+                return None, None
 
     logging.warning(f"No schema located for {uri}")
-    return None
+    return None, None
 
 
 def _find_element_at_position(element, line):
@@ -340,8 +344,16 @@ def did_open(ls, params):
     logging.info(f"didOpen: {uri}, creating session.")
     content = params.text_document.text
     session_cache[uri] = {"content": content}
-    schema = _get_schema_for_doc(ls, uri, content)
-    _validate_document(ls, uri, content, schema, None)
+
+    schema, schema_path = _get_schema_for_doc(ls, uri, content)
+    root_uri = uri.rpartition("/")[0]
+    workspace = ls.workspaces.get(root_uri)
+    default_namespace = None
+    if workspace and schema_path:
+        workspace["schemapaths_for_uri"][uri] = schema_path
+        default_namespace = workspace["default_xmlns_for_schemapath"].get(schema_path)
+
+    _validate_document(ls, uri, content, schema, default_namespace)
 
 
 @server.feature("textDocument/didChange")
