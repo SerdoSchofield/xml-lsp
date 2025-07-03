@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import threading
+import argparse
 
 import lxml.etree as ET
 import xmlschema
@@ -35,9 +36,6 @@ from lsprotocol.types import (
 from pygls.server import LanguageServer
 from pygls.uris import to_fs_path
 
-# Configure logging to a file for debugging.
-# This is useful as stdout is used for LSP communication.
-logging.basicConfig(filename="/tmp/xmllsp.log", level=logging.DEBUG, filemode="w")
 
 server = LanguageServer("xml-language-server", "v0.2")
 server.workspaces = {}
@@ -715,6 +713,26 @@ def completion(ls, params):
 
 def main():
     """The main entry point for the server."""
+    parser = argparse.ArgumentParser(description="XML Language Server")
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        metavar="FILE",
+        help="Path to the log file. If not provided, logging is disabled.",
+    )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the logging level (default: INFO).",
+    )
+    args = parser.parse_args()
+
+    if args.log_file:
+        log_level = getattr(logging, args.log_level.upper(), logging.INFO)
+        logging.basicConfig(filename=args.log_file, level=log_level, filemode="w")
+
     logging.info("Starting XML language server.")
     server.start_io()
 
