@@ -451,16 +451,23 @@ def did_close(ls, params):
     workspace = ls.workspaces.get(root_uri)
 
     if workspace:
-        logging.warning(f"workspace found for root URI: {root_uri}")
+        logging.info(f"workspace found for root URI: {root_uri}")
         if uri in workspace["schemapaths_for_uri"]:
-            schema_path = workspace["schemapaths_for_uri"][uri]
-            # AI! here, remove the entry, workspace["schemapaths_for_uri"][uri],
-            # and also, check if there are any other keys in the
-            # workspace["schemapaths_for_uri"] dict pointing to the same
-            # schema_path value. If there are none, then
-            # remove the entry
-            # workspace["schemas_for_xsdpath"][schema_path]
+            schema_path = workspace["schemapaths_for_uri"].pop(uri)
+            logging.info(
+                f"Document {uri} closed; schemapath {schema_path} no longer used by it."
+            )
 
+            # Check if any other open documents use this schema
+            if schema_path not in workspace["schemapaths_for_uri"].values():
+                logging.info(
+                    f"Schema {schema_path} is no longer used by any open document."
+                )
+                if schema_path in workspace["schemas_for_xsdpath"]:
+                    workspace["schemas_for_xsdpath"].pop(schema_path)
+                    logging.info(f"Removed schema {schema_path} from cache.")
+                if schema_path in workspace["default_xmlns_for_schemapath"]:
+                    workspace["default_xmlns_for_schemapath"].pop(schema_path, None)
     else:
         logging.warning(f"No workspace found for root URI: {root_uri}")
 
