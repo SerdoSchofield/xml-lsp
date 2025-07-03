@@ -383,6 +383,7 @@ def _get_element_context_at_position(
         A tuple containing the parent lxml element (or None) and a list of
         valid child element tag names.
     """
+    logging.info(f"_get_element_context_at_position()")
 
     position = _pos_to_offset2(xml_content, pos)
 
@@ -395,14 +396,42 @@ def _get_element_context_at_position(
     parser = ET.XMLParser(recover=True)
     try:
         root = ET.fromstring(xml_with_marker.encode("utf-8"), parser)
-    except ET.XMLSyntaxError:
+    except ET.XMLSyntaxError as e:
+        logging.info(f"could not parse document {e}")
         # The document is too broken to parse even with recovery.
         return (None, [])
 
+    # AI! introduce some logic here to discern the default XML namespace for this
+    # document, by examining the toplevel element in the parsed root,
+    # retrieving the root.tag, and then extracting the namespace from it.
+    #
+    # In support of this, produce 2 new methods in this file:
+    #   - _local_name_for_element(elt)
+    #   - _namespace_for_element(elt)
+    #
+    # Both should examine the elt.tag, which will follow one of two patterns:
+    #  - namespace-qualified. The form is like "{namespace-here}elementNameHere"
+    #  - unqualified. the form is "elementNameHere"
+    #
+    # The _local_name_for_element(elt) should return what follows the closing curly-brace
+    # in the namespace-qualified case, or just the tag if there is no curly brace.
+    #
+    # The _namespace_for_element(elt) should return what is enclosed in the curly-braces
+    # in the namespace-qualified case, or just the empty string "" if there is no curly brace.
+    #
+    # Use the following to set the default namespace. We will use it later in a subsequent change.
+    #
+    #  default_xmlns = _namespace_for_element(root)
+
     # 3. Find the marker element in the resulting tree.
-    marker = root.find(f".//{marker_tag}")
-    if marker is None:
+    # marker = root.find(f".//*[local-name()='{marker_tag}']")
+    nodeset = root.xpath(f".//*[local-name()='{marker_tag}']")
+    if not nodeset:
+        logging.info(f"xpath returned nothing")
         return (None, [])  # Could not find the marker.
+
+    marker = nodeset[0]
+    logging.info(f"retrieved marker {marker}")
 
     # 4. Get the parent of the marker. This is our context.
     parent = marker.getparent()
@@ -441,6 +470,7 @@ def _get_element_context_at_position(
     # 6. Extract the list of all possible child elements from the schema definition.
     #    The .type.content object is an XsdGroup that contains the content model.
     #    We can iterate over it to get all possible child elements.
+    logging.info(f"found parent element in the schema {parent_xsd_element}")
     valid_children = []
     content_model = parent_xsd_element.type.content
 
