@@ -1,3 +1,18 @@
+# Copyright © 2025 Google LLC.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
 import fnmatch
 import json
 import logging
@@ -22,9 +37,7 @@ from pygls.uris import to_fs_path
 
 # Configure logging to a file for debugging.
 # This is useful as stdout is used for LSP communication.
-logging.basicConfig(
-    filename="/tmp/xml-language-server.log", level=logging.DEBUG, filemode="w"
-)
+logging.basicConfig(filename="/tmp/xmllsp.log", level=logging.DEBUG, filemode="w")
 
 server = LanguageServer("xml-language-server", "v0.2")
 server.workspaces = {}
@@ -166,9 +179,7 @@ def _get_schema_for_doc(ls, uri, content):
             return schema, schema_path
 
     options = workspace.get("options", {})
-    schema_options = options.get("schema", {})
-    locators = schema_options.get("locators", [])
-    searchpaths = schema_options.get("searchpaths", [])
+    locators = options.get("schemaLocators", [])
 
     if not locators:
         logging.warning("No schema locators specified.")
@@ -176,13 +187,15 @@ def _get_schema_for_doc(ls, uri, content):
     for locator in locators:
         schema_path = None
         use_default_namespace = None
-        if locator.get("rootelement"):
-            logging.info(f"Trying locator rootelement")
-            schema_path = _find_schemapath_by_rootelement(xml_doc, searchpaths)
-        elif locator.get("location_hint"):
-            logging.info(f"Trying locator location_hint")
+        if locator.get("rootElement") and locator.get("searchPaths"):
+            logging.info(f"Trying locator rootElement")
+            schema_path = _find_schemapath_by_rootelement(
+                xml_doc, locator.get("searchPaths")
+            )
+        elif locator.get("locationHint"):
+            logging.info(f"Trying locator locationHint")
             schema_path = _find_schemapath_by_location_hint(
-                xml_doc, locator.get("location_hint")
+                xml_doc, locator.get("locationHint")
             )
         elif "patterns" in locator:
             logging.info("Trying locator patterns")
@@ -197,7 +210,7 @@ def _get_schema_for_doc(ls, uri, content):
                             f"Pattern '{pattern}' matched '{doc_filename}',"
                             f" using schema '{schema_path}'"
                         )
-                        use_default_namespace = p.get("use_default_namespace")
+                        use_default_namespace = p.get("useDefaultNamespace")
                         break
         else:
             logging.warning(f"Unrecognized locator type {locator}")
