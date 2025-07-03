@@ -99,10 +99,32 @@ def _get_schema_for_doc(ls, uri, content):
 
     options = workspace.get("options", {})
     schema_options = options.get("schema", {})
-    matchers = schema_options.get("matchers", [])
+    locators = schema_options.get("locators", [])
 
-    use_rootelement_matcher = any(m.get("rootelement") for m in matchers)
-    if not use_rootelement_matcher:
+    # AI! Modify this logic to do several things:
+    #
+    # 1. extract the schema finding logic for the "rootelement" locator, into
+    #    a separate function.
+    #
+    # 2. accept a second locator type, "location_hint". If this is present, then
+    #    look for an attribute xsi:schemaLocation on the root element of the document,
+    #    where the xsi prefix is xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance".
+    #    If that attr exists, split the string value by spaces, and then attempt to
+    #    find a schema file in this way:
+    #       - look in each of the schema_options.get("searchpaths", []), for a file called
+    #         "schema_map.json". If found, deserialize that json file, and look for a key
+    #         equal to any of the string values in the xsi:schemaLocation attribute. If found,
+    #         the value for that key, shall be the name of a file, local to that searchpath
+    #         directory.  Load the schema from that file, if it exists.
+    #         Example: if schema_map.json contains { "foobar": "myschema.xsd", "wham": "file2.xsd"}
+    #         and the root element has xsi:schemaLocation="whammy foobar", then the
+    #         logic should load "myschema.xsd".
+    #
+    # Try each locator in the order of appearance in the settings, until a schema is
+    # located.
+
+    use_rootelement_locator = any(m.get("rootelement") for m in locators)
+    if not use_rootelement_locator:
         return None
 
     try:
@@ -364,15 +386,35 @@ def _get_element_context_at_position(
     # 4. Get the parent of the marker. This is our context.
     parent = marker.getparent()
     if parent is None:
+        logging.info(f"no parent element")
         return (None, [])  # Marker is at the root, no parent.
 
     # 5. Find the schema definition for the parent element.
+    def _get_child_by_name_recurse(schema_elt, childtag):
+        if schema_elt.tag == childtag:
+            return schema_elt
+
+        foundchild = None
+        if hasattr(schema_elt.type, "content"):
+            if hasattr(schema_elt.type.content, "iter_elements"):
+                for x in schema_elt.type.content.iter_elements():
+                    if not foundchild:
+                        if x.name == childtag:
+                            foundchild = x
+                        else:
+                            foundchild = _get_child_by_name_recurse(x, childtag)
+        return foundchild
+
     try:
-        # We use schema.find() to get the XSD definition of the parent tag.
-        parent_xsd_element = schema.find(parent.tag)
+        logging.info(f"looking for parent element {parent.tag}")
+        parent_xsd_element = _get_child_by_name_recurse(
+            schema.root_elements[0], parent.tag
+        )
         if parent_xsd_element is None:
+            logging.info(f"no parent element found in the schema")
             return (parent, [])
     except KeyError:
+        logging.info(f"KeyError while finding parent element in the schema")
         return (parent, [])  # Parent tag not found in schema.
 
     # 6. Extract the list of all possible child elements from the schema definition.
@@ -385,12 +427,20 @@ def _get_element_context_at_position(
         for element_node in content_model.iter_elements():
             # The 'name' of each element node is the valid tag.
             valid_children.append(element_node.name)
+    else:
+        logging.info(f"content_model has no iter_elements")
 
+    # TODO: make this recurse.
     # As your schema uses extensions, we also need to check the base type's content.
     base_type = getattr(parent_xsd_element.type, "base_type", None)
-    if base_type and hasattr(base_type.content, "iter_elements"):
-        for element_node in base_type.content.iter_elements():
-            valid_children.append(element_node.name)
+    if base_type:
+        if hasattr(base_type.content, "iter_elements"):
+            for element_node in base_type.content.iter_elements():
+                valid_children.append(element_node.name)
+        else:
+            logging.info(f"base_type content has no iter_elements")
+    else:
+        logging.info(f"no base_type")
 
     # For a more advanced implementation, you would filter out elements that
     # already exist if they cannot appear more than once.
