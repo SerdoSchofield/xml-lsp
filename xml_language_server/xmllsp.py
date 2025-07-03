@@ -45,7 +45,6 @@ server.workspaces = {}
 session_cache = TTLCache(maxsize=128, ttl=180)
 
 
-
 @server.feature("initialize")
 def initialize(ls, params):
     """Server is initialized."""
@@ -102,8 +101,6 @@ def _apply_incremental_changes(content: str, changes: list) -> str:
     return content
 
 
-
-
 def _find_element_at_position(element, line):
     """Recursively find the deepest element at a given line number (1-based)."""
     candidate = None
@@ -130,7 +127,7 @@ def _validate_document(ls, uri, content, schema, default_xmlns):
     try:
         # xml_doc = ET.fromstring(content.encode("utf-8"))
         # validation_errors = list(schema.iter_errors(xml_doc))
-        # Using XMLResource I can specify a default namespace if desired.
+        # Using XMLResource allows caller to specify a default namespace if desired.
         if default_xmlns:
             logging.info(f"applying default namespace {default_xmlns}")
             xml_resource = xmlschema.XMLResource(content, namespace=default_xmlns)
@@ -270,7 +267,8 @@ def did_change(ls, params):
     if workspace and uri in workspace.schemapaths_for_uri:
         schema_path = workspace.schemapaths_for_uri[uri]
         schema = workspace.schemas_for_xsdpath.get(schema_path)
-        default_namespace = workspace.default_xmlns_for_schemapath.get(schema_path)
+        if schema_path:
+            default_namespace = workspace.default_xmlns_for_schemapath.get(schema_path)
 
     if not schema:
         return None
@@ -426,11 +424,10 @@ def _get_element_context_at_position(
     default_xmlns = _namespace_for_element(root) or default_namespace
 
     # 3. Find the marker element in the resulting tree.
-    # marker = root.find(f".//*[local-name()='{marker_tag}']")
     nodeset = root.xpath(f".//*[local-name()='{marker_tag}']")
     if not nodeset:
         logging.info(f"xpath returned nothing")
-        return (None, [])  # Could not find the marker.
+        return (None, [])
 
     marker = nodeset[0]
     logging.info(f"retrieved marker {marker}")
@@ -438,8 +435,8 @@ def _get_element_context_at_position(
     # 4. Get the parent of the marker. This is our context.
     parent = marker.getparent()
     if parent is None:
-        logging.info(f"no parent element")
-        return (None, [])  # Marker is at the root, no parent.
+        logging.info(f"the marker element is the root element. Cannot complete.")
+        return (None, [])
 
     # 5. Find the schema definition for the parent element.
     def _get_child_by_name_recurse(schema_elt, childtag, visited=None):
@@ -490,9 +487,10 @@ def _get_element_context_at_position(
     logging.info(f"found parent element in the schema {parent_xsd_element}")
     valid_children = _get_elements_from_type(parent_xsd_element.type, default_xmlns)
 
-    # For a more advanced implementation, you would filter out elements that
-    # already exist if they cannot appear more than once.
-    # For now, we return all possibilities.
+    # TODO: Filter out elements that already exist if the schema says they
+    # cannot appear more than once.  For now, we return all possibilities, and
+    # let later validation sort that out.
+
     return (parent, sorted(list(set(valid_children))))
 
 

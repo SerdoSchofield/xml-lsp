@@ -134,7 +134,6 @@ class Workspace:
             if schema_path:
                 try:
                     xsd_root = ET.parse(schema_path).getroot()
-                    target_namespace = xsd_root.get("targetNamespace")
                     schema = xmlschema.XMLSchema11(schema_path)
                     logging.info(f"Successfully loaded schema {schema_path}")
 
@@ -142,10 +141,25 @@ class Workspace:
                     self.schemas_for_xsdpath[schema_path] = schema
                     self.schemapaths_for_uri[uri] = schema_path
 
-                    if target_namespace and use_default_namespace:
-                        self.default_xmlns_for_schemapath[schema_path] = (
-                            target_namespace
-                        )
+                    # If the useDefaultNamespace flag has been set on this
+                    # locator, get the targetNamespace for this schema and stash
+                    # it. Purpose: to handle cases where people want to ignore
+                    # xmlns with documents.  Sounds amateur, but there's a big
+                    # example: Microsoft with their MSBuild project files. The
+                    # xml uses no namespace, but the schema are in the msbuild
+                    # namespace. We CAN use xmlschema to validate such
+                    # documents, basically telling it "assume this namespace as
+                    # you validate, even though it's not declared in the
+                    # document." For that we need to know/retain the target
+                    # namespace.
+                    #
+                    # This useDefaultNamespace works only with the patterns locator.
+                    if use_default_namespace:
+                        target_namespace = xsd_root.get("targetNamespace")
+                        if target_namespace:
+                            self.default_xmlns_for_schemapath[schema_path] = (
+                                target_namespace
+                            )
 
                     return schema, schema_path
                 except Exception as e:
