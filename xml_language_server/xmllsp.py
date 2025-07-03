@@ -55,6 +55,13 @@ def initialize(ls, params):
     return None
 
 
+@server.feature("workspace/didChangeConfiguration")
+def did_change_configuration(ls, params):
+    """Configuration changed."""
+    logging.info("Configuration changed. (no-op)")
+    pass
+
+
 def _pos_to_offset2(content: str, pos: Position) -> int:
     """Convert line/character position to a string offset."""
     lines = content.splitlines(True)
