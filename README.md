@@ -36,7 +36,21 @@ preferred. But, most XML files that I work with do not have rnc schema, and the
 "just convert your XSD to rnc" is not a rabbit hole I want to descend into. 
 
 So I would say, if you can use nxml with rnc, do it.  If you have only XSD, then 
-maybe this will work. 
+maybe this will work.
+
+## Installation
+
+### Quick Start for Emacs Users
+
+If you're using **Doom Emacs**, see the [Doom Emacs Installation Guide](DOOM_EMACS_INSTALL.md) for detailed setup instructions.
+
+For other Emacs configurations (with lsp-mode or eglot):
+
+1. Clone this repository and set up the Python environment (see below)
+2. Install the `xml-lsp.el` package
+3. Configure schema locators in your Emacs configuration
+
+See the [xml-lsp.el commentary](xml-lsp.el) for detailed configuration examples. 
 
 
 

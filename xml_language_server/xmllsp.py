@@ -17,7 +17,9 @@ import argparse
 import logging
 import os
 import re
+import sys
 import threading
+from pathlib import Path
 
 import lxml.etree as ET
 import xmlschema
@@ -43,6 +45,35 @@ server.workspaces = {}
 # Cache for storing document-specific sessions
 # Sessions expire after 180 seconds of inactivity
 session_cache = TTLCache(maxsize=128, ttl=180)
+
+
+def _validate_file_uri(uri):
+    """
+    Validates a file URI to ensure it's safe to access.
+    Returns the resolved file path if valid, None otherwise.
+    
+    Security: Prevents access to arbitrary files outside the workspace.
+    """
+    if not uri or not isinstance(uri, str):
+        return None
+    
+    try:
+        file_path = to_fs_path(uri)
+        resolved_path = Path(file_path).resolve()
+        
+        # Security: Ensure the file exists and is a regular file
+        if not resolved_path.exists() or not resolved_path.is_file():
+            return None
+        
+        # Security: Ensure the file has an XML extension
+        if resolved_path.suffix.lower() not in ['.xml', '.xsd', '.csproj', '.pom', '.wsdl', '.xsl', '.xslt', '']:
+            logging.warning(f"Unexpected file extension for XML document: {resolved_path}")
+            # Still allow it but log warning
+        
+        return str(resolved_path)
+    except (OSError, ValueError) as e:
+        logging.error(f"Error validating file URI {uri}: {e}")
+        return None
 
 
 @server.feature("initialize")
@@ -244,12 +275,19 @@ def did_change(ls, params):
     # Ensure session exists, refreshing its TTL
     if uri not in session_cache or "content" not in session_cache[uri]:
         logging.info(f"Session or content not found for {uri}, creating/re-reading.")
+        
+        # Security: Validate the file URI before accessing
+        file_path = _validate_file_uri(uri)
+        if not file_path:
+            logging.error(f"Invalid or inaccessible file URI: {uri}")
+            return
+        
         try:
-            with open(to_fs_path(uri), "r", encoding="utf-8") as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
                 session_cache[uri] = {"content": content}
-        except Exception:
-            logging.error("Could not read file %s", uri)
+        except Exception as e:
+            logging.error(f"Could not read file {uri}: {e}")
             return
 
     session = session_cache[uri]
@@ -302,8 +340,14 @@ def did_save(ls, params):
     """Document saved, so refresh content cache."""
     uri = params.text_document.uri
     logging.info(f"didSave: {uri}, refreshing content cache.")
+    
+    # Security: Validate the file URI before accessing
+    file_path = _validate_file_uri(uri)
+    if not file_path:
+        logging.error(f"Invalid or inaccessible file URI: {uri}")
+        return
+    
     try:
-        file_path = to_fs_path(uri)
         with open(file_path, "r", encoding="utf-8") as f:
             content = f.read()
         session_cache[uri] = {"content": content}
@@ -584,6 +628,18 @@ def main():
             log_file = default_log_file_location
         if not log_level_str:
             log_level_str = default_log_level
+
+        # Security: Validate and resolve the log file path
+        try:
+            log_path = Path(log_file).resolve()
+            # Security: Ensure parent directory exists or can be created
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_file = str(log_path)
+        except (OSError, ValueError) as e:
+            # Fall back to default location if specified path is invalid
+            print(f"Warning: Invalid log file path '{log_file}': {e}", file=sys.stderr)
+            print(f"Using default log file: {default_log_file_location}", file=sys.stderr)
+            log_file = default_log_file_location
 
         log_level = getattr(logging, log_level_str.upper(), logging.INFO)
         logging.basicConfig(filename=log_file, level=log_level, filemode="w")

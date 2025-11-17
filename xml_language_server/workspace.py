@@ -16,6 +16,7 @@ import fnmatch
 import json
 import logging
 import os
+from pathlib import Path
 
 import lxml.etree as ET
 import xmlschema
@@ -25,12 +26,70 @@ from pygls.uris import to_fs_path
 def _find_schemapath_by_rootelement(xml_doc, searchpaths):
     """Finds schema file path based on root element name."""
     root_element_name = xml_doc.tag
+    
+    # Extract local name from namespaced element names
+    if "}" in root_element_name:
+        root_element_name = root_element_name.split("}", 1)[1]
+    
+    # Security: Validate the root element name to prevent path traversal
+    # Only allow alphanumeric characters, underscores, hyphens, and dots
+    if not root_element_name or not all(c.isalnum() or c in "._-" for c in root_element_name):
+        logging.warning(f"Invalid root element name: {root_element_name}")
+        return None
+    
+    # Security: Prevent path traversal attempts
+    if ".." in root_element_name or "/" in root_element_name or "\\" in root_element_name:
+        logging.warning(f"Potential path traversal attempt in root element: {root_element_name}")
+        return None
+    
     for searchpath in searchpaths:
-        schema_path = os.path.join(searchpath, f"{root_element_name}.xsd")
-        if os.path.exists(schema_path):
-            logging.info(f"Found schema for {root_element_name} at {schema_path}")
-            return schema_path
+        try:
+            # Resolve both paths to their canonical absolute paths
+            search_dir = Path(searchpath).resolve()
+            schema_file = (search_dir / f"{root_element_name}.xsd").resolve()
+            
+            # Security: Ensure the resolved path is still within the search directory
+            if not str(schema_file).startswith(str(search_dir)):
+                logging.warning(f"Path traversal attempt detected: {schema_file}")
+                continue
+                
+            if schema_file.exists():
+                schema_path = str(schema_file)
+                logging.info(f"Found schema for {root_element_name} at {schema_path}")
+                return schema_path
+        except (OSError, ValueError) as e:
+            logging.error(f"Error resolving path in {searchpath}: {e}")
+            continue
+    
     return None
+
+
+def _validate_schema_path(schema_path):
+    """
+    Validates a schema file path to ensure it's safe to use.
+    Returns the resolved absolute path if valid, None otherwise.
+    
+    Security: Prevents path traversal and ensures the file exists.
+    """
+    if not schema_path or not isinstance(schema_path, str):
+        return None
+    
+    try:
+        schema_file = Path(schema_path).resolve()
+        
+        # Security: Ensure the path exists and is a file
+        if not schema_file.exists() or not schema_file.is_file():
+            return None
+        
+        # Security: Ensure it has a valid extension
+        if schema_file.suffix.lower() not in ['.xsd', '.xml']:
+            logging.warning(f"Invalid schema file extension: {schema_file}")
+            return None
+            
+        return str(schema_file)
+    except (OSError, ValueError) as e:
+        logging.error(f"Error validating schema path {schema_path}: {e}")
+        return None
 
 
 def _find_schemapath_by_location_hint(xml_doc, map_path):
@@ -42,24 +101,56 @@ def _find_schemapath_by_location_hint(xml_doc, map_path):
         return None
 
     hints = attr_value.split()
-    if os.path.exists(map_path):
-        try:
-            with open(map_path, "r", encoding="utf-8") as f:
-                schema_map = json.load(f)
+    
+    try:
+        map_file = Path(map_path).resolve()
+        if not map_file.exists():
+            return None
+            
+        with open(map_file, "r", encoding="utf-8") as f:
+            schema_map = json.load(f)
 
-            searchpath = os.path.dirname(map_path)
+        # Security: Ensure schema_map is a dictionary
+        if not isinstance(schema_map, dict):
+            logging.error(f"Invalid schema map format in {map_path}")
+            return None
 
-            for hint in hints:
-                if hint in schema_map:
-                    schema_filename = schema_map[hint]
-                    schema_path = os.path.join(searchpath, schema_filename)
-                    if os.path.exists(schema_path):
+        searchpath = map_file.parent
+
+        for hint in hints:
+            if hint in schema_map:
+                schema_filename = schema_map[hint]
+                
+                # Security: Validate schema_filename is a string
+                if not isinstance(schema_filename, str):
+                    logging.warning(f"Invalid schema filename type for hint {hint}")
+                    continue
+                
+                # Security: Prevent path traversal in schema filename
+                if ".." in schema_filename or "/" in schema_filename or "\\" in schema_filename:
+                    logging.warning(f"Potential path traversal in schema filename: {schema_filename}")
+                    continue
+                
+                try:
+                    schema_file = (searchpath / schema_filename).resolve()
+                    
+                    # Security: Ensure the resolved path is still within the search directory
+                    if not str(schema_file).startswith(str(searchpath)):
+                        logging.warning(f"Path traversal attempt detected: {schema_file}")
+                        continue
+                    
+                    if schema_file.exists():
+                        schema_path = str(schema_file)
                         logging.info(
                             f"Found schema hint '{hint}' pointing to {schema_path}"
                         )
                         return schema_path
-        except Exception as e:
-            logging.error(f"Error processing schema_map.json at {map_path}: {e}")
+                except (OSError, ValueError) as e:
+                    logging.error(f"Error resolving schema path: {e}")
+                    continue
+    except Exception as e:
+        logging.error(f"Error processing schema_map.json at {map_path}: {e}")
+    
     return None
 
 
@@ -120,14 +211,20 @@ class Workspace:
                 for p in patterns:
                     pattern = p.get("pattern")
                     if pattern and fnmatch.fnmatch(doc_filename, pattern):
-                        schema_path = p.get("path")
-                        if schema_path:
-                            logging.info(
-                                f"Pattern '{pattern}' matched '{doc_filename}',"
-                                f" using schema '{schema_path}'"
-                            )
-                            use_default_namespace = p.get("useDefaultNamespace")
-                            break
+                        raw_schema_path = p.get("path")
+                        if raw_schema_path:
+                            # Security: Validate the schema path
+                            schema_path = _validate_schema_path(raw_schema_path)
+                            if schema_path:
+                                logging.info(
+                                    f"Pattern '{pattern}' matched '{doc_filename}',"
+                                    f" using schema '{schema_path}'"
+                                )
+                                use_default_namespace = p.get("useDefaultNamespace")
+                                break
+                            else:
+                                logging.warning(f"Invalid schema path from pattern: {raw_schema_path}")
+                                schema_path = None
             else:
                 logging.warning(f"Unrecognized locator type {locator}")
 
