@@ -36,7 +36,11 @@ from lsprotocol.types import (
 from pygls.server import LanguageServer
 from pygls.uris import to_fs_path
 
-from .workspace import Workspace
+# Handle both running as a module and as a script
+try:
+    from .workspace import Workspace
+except ImportError:
+    from workspace import Workspace
 
 server = LanguageServer("xml-language-server", "v0.2")
 server.workspaces = {}
