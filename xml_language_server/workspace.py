@@ -92,7 +92,7 @@ def _validate_schema_path(schema_path):
         return None
 
 
-def _find_schemapath_by_location_hint(xml_doc, map_path):
+def _find_schemapath_by_location_hint(xml_doc, map_path, doc_uri=None):
     """Finds schema file path based on xsi:schemaLocation hint."""
     XSI = "http://www.w3.org/2001/XMLSchema-instance"
     schemaLocation_attr = f"{{{XSI}}}schemaLocation"
@@ -101,6 +101,42 @@ def _find_schemapath_by_location_hint(xml_doc, map_path):
         return None
 
     hints = attr_value.split()
+    
+    # If doc_uri is provided, try to resolve file: URIs relative to document location
+    if doc_uri:
+        try:
+            doc_path = Path(to_fs_path(doc_uri)).resolve()
+            doc_dir = doc_path.parent
+            
+            for hint in hints:
+                # Check if hint starts with "file:"
+                if hint.startswith("file:"):
+                    # Strip the "file:" prefix
+                    file_path = hint[5:]  # Remove "file:" prefix
+                    
+                    # Security: Basic validation of the file path
+                    if not file_path:
+                        continue
+                    
+                    try:
+                        # Resolve the path relative to the document directory
+                        if Path(file_path).is_absolute():
+                            schema_file = Path(file_path).resolve()
+                        else:
+                            schema_file = (doc_dir / file_path).resolve()
+                        
+                        # Security: Validate the resolved path
+                        validated_path = _validate_schema_path(str(schema_file))
+                        if validated_path and Path(validated_path).exists():
+                            logging.info(
+                                f"Found schema from file: URI '{hint}' at {validated_path}"
+                            )
+                            return validated_path
+                    except (OSError, ValueError) as e:
+                        logging.error(f"Error resolving file: URI '{hint}': {e}")
+                        continue
+        except Exception as e:
+            logging.error(f"Error processing file: URIs for document {doc_uri}: {e}")
     
     try:
         map_file = Path(map_path).resolve()
@@ -202,7 +238,7 @@ class Workspace:
             elif locator.get("locationHint"):
                 logging.info("Trying locator locationHint")
                 schema_path = _find_schemapath_by_location_hint(
-                    xml_doc, locator.get("locationHint")
+                    xml_doc, locator.get("locationHint"), uri
                 )
             elif "patterns" in locator:
                 logging.info("Trying locator patterns")
